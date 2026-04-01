@@ -1,127 +1,577 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
-    <title>YouTube to MP3</title>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Wavify — YouTube to MP3</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link href="https://fonts.googleapis.com/css2?family=Syne:wght@400;600;700;800&family=DM+Mono:wght@300;400;500&display=swap" rel="stylesheet" />
+    <style>
+/* ─── Variables ────────────────────────────────────────────────────────────── */
+:root {
+    --bg:       #080b10;
+    --s1:       #0e1420;
+    --s2:       #141c2e;
+    --border:   rgba(100,180,255,.12);
+    --accent:   #3df0b0;
+    --blue:     #4da8ff;
+    --red:      #ff6b6b;
+    --text:     #e8f0fe;
+    --muted:    #6b7fa3;
+    --r:        16px;
+    --fh:       'Syne', sans-serif;
+    --fm:       'DM Mono', monospace;
+}
+
+*,*::before,*::after { box-sizing:border-box; margin:0; padding:0; }
+html { scroll-behavior:smooth; }
+body { background:var(--bg); color:var(--text); font-family:var(--fh); min-height:100vh; overflow-x:hidden; }
+
+/* grid bg */
+body::before {
+    content:'';
+    position:fixed; inset:0;
+    background-image:
+        linear-gradient(rgba(61,240,176,.025) 1px,transparent 1px),
+        linear-gradient(90deg,rgba(61,240,176,.025) 1px,transparent 1px);
+    background-size:60px 60px;
+    pointer-events:none; z-index:0;
+}
+
+/* orbs */
+.orb { position:fixed; border-radius:50%; filter:blur(120px); pointer-events:none; z-index:0; }
+.orb-1 { width:600px;height:600px; background:radial-gradient(circle,rgba(61,240,176,.07),transparent 70%); top:-200px;left:-200px; }
+.orb-2 { width:500px;height:500px; background:radial-gradient(circle,rgba(77,168,255,.06),transparent 70%); bottom:-200px;right:-100px; }
+
+/* ─── Layout ─────────────────────────────────────────────────────────────── */
+.container { position:relative; z-index:1; max-width:760px; margin:0 auto; padding:60px 24px 100px; }
+
+/* ─── Header ─────────────────────────────────────────────────────────────── */
+header { text-align:center; margin-bottom:52px; animation:fadeUp .65s ease both; }
+.badge {
+    display:inline-flex; align-items:center; gap:8px;
+    background:rgba(61,240,176,.08); border:1px solid rgba(61,240,176,.2);
+    border-radius:100px; padding:6px 16px;
+    font-family:var(--fm); font-size:12px; color:var(--accent);
+    letter-spacing:.08em; text-transform:uppercase; margin-bottom:22px;
+}
+h1 { font-size:clamp(38px,8vw,68px); font-weight:800; line-height:.95; letter-spacing:-.03em; margin-bottom:14px; }
+h1 .l1 { display:block; }
+h1 .l2 { display:block; background:linear-gradient(90deg,var(--accent),var(--blue)); -webkit-background-clip:text; -webkit-text-fill-color:transparent; background-clip:text; }
+.sub { font-family:var(--fm); font-size:13px; color:var(--muted); }
+
+/* ─── Card ───────────────────────────────────────────────────────────────── */
+.card { background:var(--s1); border:1px solid var(--border); border-radius:24px; padding:32px; animation:fadeUp .65s ease .15s both; }
+
+/* ─── Input ──────────────────────────────────────────────────────────────── */
+.input-wrap { position:relative; margin-bottom:14px; }
+.url-icon   { position:absolute; left:17px; top:50%; transform:translateY(-50%); color:var(--muted); font-size:17px; pointer-events:none; transition:color .2s; }
+.input-wrap:focus-within .url-icon { color:var(--accent); }
+#urlInput {
+    width:100%; background:var(--s2); border:1.5px solid var(--border); border-radius:var(--r);
+    padding:17px 17px 17px 48px; color:var(--text); font-family:var(--fm); font-size:14px; outline:none;
+    transition:border-color .25s,box-shadow .25s;
+}
+#urlInput:focus { border-color:rgba(61,240,176,.4); box-shadow:0 0 0 3px rgba(61,240,176,.06); }
+#urlInput::placeholder { color:var(--muted); }
+
+/* ─── Buttons ────────────────────────────────────────────────────────────── */
+.action-row { display:grid; grid-template-columns:1fr 1fr; gap:10px; margin-bottom:14px; }
+.btn {
+    display:flex; align-items:center; justify-content:center; gap:8px;
+    padding:13px 18px; border:none; border-radius:var(--r);
+    font-family:var(--fh); font-size:14px; font-weight:600; cursor:pointer;
+    transition:all .2s; position:relative; overflow:hidden; white-space:nowrap;
+}
+.btn:disabled { opacity:.38; cursor:not-allowed; }
+.btn-outline  { background:transparent; border:1.5px solid var(--border); color:var(--text); }
+.btn-outline:hover:not(:disabled) { border-color:rgba(61,240,176,.35); color:var(--accent); background:rgba(61,240,176,.04); }
+.btn-primary  { background:linear-gradient(135deg,var(--accent),#29c994); color:#080b10; grid-column:1/-1; }
+.btn-primary:hover:not(:disabled) { transform:translateY(-1px); box-shadow:0 8px 24px rgba(61,240,176,.22); }
+.btn-primary:active:not(:disabled) { transform:translateY(0); }
+
+.spin { width:15px;height:15px; border:2px solid rgba(0,0,0,.2); border-top-color:#080b10; border-radius:50%; animation:spin .7s linear infinite; display:none; }
+.btn.loading .spin   { display:block; }
+.btn.loading .lbl    { display:none; }
+
+/* ─── Quality ────────────────────────────────────────────────────────────── */
+#qualitySection { display:none; margin-top:18px; animation:fadeUp .35s ease both; }
+.slabel { font-family:var(--fm); font-size:11px; text-transform:uppercase; letter-spacing:.12em; color:var(--muted); margin-bottom:10px; }
+.quality-grid { display:flex; flex-wrap:wrap; gap:8px; }
+.qbtn {
+    background:var(--s2); border:1.5px solid var(--border); border-radius:10px;
+    padding:9px 16px; color:var(--muted); font-family:var(--fm); font-size:13px;
+    cursor:pointer; transition:all .2s;
+}
+.qbtn:hover  { border-color:rgba(77,168,255,.4); color:var(--blue); }
+.qbtn.active { background:rgba(77,168,255,.1); border-color:rgba(77,168,255,.5); color:var(--blue); }
+
+/* ─── Preview ────────────────────────────────────────────────────────────── */
+#previewSection { display:none; margin-top:22px; animation:fadeUp .35s ease both; }
+.preview-card { display:flex; gap:14px; align-items:center; background:var(--s2); border:1px solid var(--border); border-radius:var(--r); padding:14px; }
+.pthumb { width:70px;height:70px; border-radius:10px; object-fit:cover; flex-shrink:0; background:var(--bg); }
+.pthumb-ph { width:70px;height:70px; border-radius:10px; background:var(--s1); border:1px solid var(--border); display:flex; align-items:center; justify-content:center; font-size:26px; flex-shrink:0; }
+.pinfo { flex:1; min-width:0; }
+.ptitle { font-weight:700; font-size:14px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; margin-bottom:3px; }
+.pmeta  { font-family:var(--fm); font-size:12px; color:var(--muted); }
+.pbadge { display:inline-block; background:rgba(61,240,176,.1); border:1px solid rgba(61,240,176,.25); border-radius:100px; padding:2px 10px; font-family:var(--fm); font-size:11px; color:var(--accent); margin-top:5px; }
+
+/* ─── Progress ───────────────────────────────────────────────────────────── */
+#progressSection { display:none; margin-top:22px; animation:fadeUp .35s ease both; }
+.prog-header { display:flex; align-items:center; justify-content:space-between; margin-bottom:9px; }
+.prog-title  { font-size:13px; font-weight:600; display:flex; align-items:center; gap:7px; }
+.pulse { width:8px;height:8px; background:var(--accent); border-radius:50%; animation:pulse 1.2s ease infinite; }
+.prog-pct  { font-family:var(--fm); font-size:13px; color:var(--accent); }
+.prog-track { height:5px; background:var(--s2); border-radius:100px; overflow:hidden; margin-bottom:8px; }
+.prog-bar   { height:100%; background:linear-gradient(90deg,var(--accent),var(--blue)); border-radius:100px; width:0%; transition:width .4s cubic-bezier(.4,0,.2,1); }
+.prog-detail { font-family:var(--fm); font-size:12px; color:var(--muted); }
+
+/* ─── Track list ─────────────────────────────────────────────────────────── */
+#trackSection { display:none; margin-top:28px; animation:fadeUp .4s ease both; }
+.track-header  { display:flex; align-items:center; justify-content:space-between; margin-bottom:14px; }
+.track-title   { font-size:15px; font-weight:700; }
+.btn-zip {
+    display:inline-flex; align-items:center; gap:7px;
+    background:linear-gradient(135deg,var(--accent),#29c994); color:#080b10;
+    border:none; border-radius:10px; padding:9px 18px;
+    font-family:var(--fh); font-size:13px; font-weight:700; cursor:pointer;
+    transition:all .2s;
+}
+.btn-zip:hover { transform:translateY(-1px); box-shadow:0 6px 20px rgba(61,240,176,.25); }
+
+.track-list { display:flex; flex-direction:column; gap:8px; }
+.track-item {
+    display:flex; align-items:center; gap:12px;
+    background:var(--s2); border:1px solid var(--border); border-radius:12px;
+    padding:12px 14px; transition:border-color .2s;
+}
+.track-item:hover { border-color:rgba(61,240,176,.2); }
+
+.track-num  { font-family:var(--fm); font-size:12px; color:var(--muted); min-width:24px; text-align:center; }
+.track-cover {
+    width:42px; height:42px; border-radius:8px; object-fit:cover;
+    background:var(--s1); border:1px solid var(--border); flex-shrink:0;
+    display:flex; align-items:center; justify-content:center; font-size:18px;
+    overflow:hidden;
+}
+.track-cover img { width:100%; height:100%; object-fit:cover; border-radius:8px; }
+.track-info { flex:1; min-width:0; }
+.track-name { font-size:13px; font-weight:600; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.track-meta { font-family:var(--fm); font-size:11px; color:var(--muted); margin-top:2px; }
+.track-dur  { font-family:var(--fm); font-size:12px; color:var(--muted); flex-shrink:0; }
+
+.btn-dl-song {
+    display:inline-flex; align-items:center; gap:6px;
+    background:rgba(61,240,176,.08); border:1px solid rgba(61,240,176,.2);
+    border-radius:8px; padding:7px 13px;
+    font-family:var(--fh); font-size:12px; font-weight:600; color:var(--accent);
+    cursor:pointer; transition:all .2s; white-space:nowrap; flex-shrink:0;
+}
+.btn-dl-song:hover { background:rgba(61,240,176,.15); border-color:rgba(61,240,176,.4); }
+
+/* ─── Warnings ───────────────────────────────────────────────────────────── */
+#warningsLog {
+    display:none; margin-top:14px;
+    background:rgba(255,107,107,.05); border:1px solid rgba(255,107,107,.15);
+    border-radius:var(--r); padding:12px 14px;
+    font-family:var(--fm); font-size:12px; color:var(--red);
+    max-height:110px; overflow-y:auto;
+}
+#warningsLog p { margin-bottom:3px; }
+
+/* ─── Toast ──────────────────────────────────────────────────────────────── */
+#toast {
+    position:fixed; bottom:30px; left:50%; transform:translateX(-50%) translateY(20px);
+    background:var(--s1); border:1px solid var(--border); border-radius:100px;
+    padding:11px 22px; font-size:13px; font-family:var(--fm);
+    box-shadow:0 8px 32px rgba(0,0,0,.4);
+    opacity:0; transition:all .3s; z-index:100; white-space:nowrap; pointer-events:none;
+}
+#toast.visible { opacity:1; transform:translateX(-50%) translateY(0); }
+#toast.success { border-color:rgba(61,240,176,.4); color:var(--accent); }
+#toast.error   { border-color:rgba(255,107,107,.4); color:var(--red); }
+#toast.info    { border-color:rgba(77,168,255,.4);  color:var(--blue); }
+
+/* ─── Footer ─────────────────────────────────────────────────────────────── */
+footer { text-align:center; margin-top:52px; font-family:var(--fm); font-size:12px; color:var(--muted); animation:fadeUp .65s ease .3s both; }
+
+/* ─── Animations ─────────────────────────────────────────────────────────── */
+@keyframes fadeUp { from{opacity:0;transform:translateY(18px)} to{opacity:1;transform:translateY(0)} }
+@keyframes spin   { to{transform:rotate(360deg)} }
+@keyframes pulse  { 0%,100%{opacity:1} 50%{opacity:.25} }
+
+/* ─── Responsive ─────────────────────────────────────────────────────────── */
+@media(max-width:520px) {
+    .container { padding:36px 14px 80px; }
+    .card { padding:18px; }
+    .action-row { grid-template-columns:1fr; }
+    .btn-primary { grid-column:1; }
+    .track-dur { display:none; }
+}
+    </style>
 </head>
+<body>
 
-<body style="text-align:center; padding:50px; font-family:Arial; background:#111; color:white;">
+<div class="orb orb-1"></div>
+<div class="orb orb-2"></div>
 
-    <h1>🎵 YouTube Downloader</h1>
+<div class="container">
 
-    <input 
-        type="text" 
-        id="url" 
-        placeholder="Paste YouTube video or playlist"
-        style="width:350px; padding:10px;"
-    />
+    <header>
+        <div class="badge">🎵 Wavify</div>
+        <h1>
+            <span class="l1">Download music.</span>
+            <span class="l2">Keep it forever.</span>
+        </h1>
+        <p class="sub">YouTube → MP3 · Playlists · High Quality</p>
+    </header>
 
-    <br><br>
+    <div class="card">
 
-    <button onclick="preview()">Preview</button>
-    <button onclick="loadFormats()">Show Quality</button>
-    <button onclick="download()">Download</button>
-
-    <br><br>
-
-    <!-- Preview -->
-    <div id="previewBox"></div>
-
-    <!-- Quality list -->
-    <div id="formatsBox"></div>
-
-    <!-- Progress -->
-    <div style="width:350px; margin:auto;">
-        <div style="background:#444; height:20px;">
-            <div id="bar" style="background:#00c853; width:0%; height:20px;"></div>
+        <!-- URL input -->
+        <div class="input-wrap">
+            <input type="url" id="urlInput"
+                   placeholder="Paste a YouTube video or playlist URL…"
+                   autocomplete="off" spellcheck="false" />
+            <span class="url-icon">⌁</span>
         </div>
-        <p id="progressText">0%</p>
-        <p id="sizeText"></p>
+
+        <!-- Actions -->
+        <div class="action-row">
+            <button class="btn btn-outline" id="btnPreview" onclick="handlePreview()">
+                <div class="spin"></div><span class="lbl">👁 Preview</span>
+            </button>
+            <button class="btn btn-outline" id="btnFormats" onclick="handleFormats()">
+                <div class="spin"></div><span class="lbl">⚙ Quality</span>
+            </button>
+            <button class="btn btn-primary" id="btnDownload" onclick="handleDownload()">
+                <div class="spin"></div><span class="lbl">⬇ Download MP3</span>
+            </button>
+        </div>
+
+        <!-- Quality -->
+        <div id="qualitySection">
+            <div class="slabel">Select Quality</div>
+            <div class="quality-grid" id="qualityGrid"></div>
+        </div>
+
+        <!-- Preview -->
+        <div id="previewSection"></div>
+
+        <!-- Progress -->
+        <div id="progressSection">
+            <div class="prog-header">
+                <div class="prog-title">
+                    <span class="pulse"></span>
+                    <span id="progLabel">Downloading…</span>
+                </div>
+                <span class="prog-pct" id="progPct">0%</span>
+            </div>
+            <div class="prog-track"><div class="prog-bar" id="progBar"></div></div>
+            <div class="prog-detail" id="progDetail"></div>
+        </div>
+
+        <!-- Warnings -->
+        <div id="warningsLog"></div>
+
+        <!-- ── Track list (shown after download) ── -->
+        <div id="trackSection">
+            <div class="track-header">
+                <div class="track-title" id="trackHeading">Downloaded Tracks</div>
+                <button class="btn-zip" id="btnZip" onclick="downloadZip()">
+                    ⬇ Download ZIP
+                </button>
+            </div>
+            <div class="track-list" id="trackList"></div>
+        </div>
+
     </div>
 
-    <p id="status"></p>
+    <footer><p>For personal use only · Respect copyright laws</p></footer>
+</div>
+
+<div id="toast"></div>
 
 <script>
-let selectedQuality = "192";
+/* ─── State ──────────────────────────────────────────────────────────────── */
+let selectedQuality = '192';
+let activeEvt       = null;
+let isDownloading   = false;
+let currentSession  = null;   // { sessionId, fileName, tracks[] }
 
-async function preview() {
-    const url = document.getElementById('url').value;
-
-    const res = await fetch('/preview', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ url })
-    });
-
-    const data = await res.json();
-
-    document.getElementById('previewBox').innerHTML = `
-        <h3>${data.title}</h3>
-        <p>${data.artist}</p>
-        <img src="${data.thumbnail}" width="300"/>
-    `;
+/* ─── Toast ──────────────────────────────────────────────────────────────── */
+let toastTimer = null;
+function toast(msg, type = 'info', ms = 3500) {
+    const t = document.getElementById('toast');
+    t.textContent = msg;
+    t.className = `visible ${type}`;
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(() => t.className = '', ms);
 }
 
-// 🎯 LOAD ALL QUALITIES WITH SIZE
-async function loadFormats() {
-    const url = document.getElementById('url').value;
-
-    const res = await fetch('/formats', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ url })
+/* ─── Loader helpers ─────────────────────────────────────────────────────── */
+function setLoading(id, on) {
+    const b = document.getElementById(id);
+    b.classList.toggle('loading', on);
+    b.disabled = on;
+}
+function lockAll(lock) {
+    ['btnPreview','btnFormats','btnDownload'].forEach(id => {
+        document.getElementById(id).disabled = lock;
     });
+}
 
-    const formats = await res.json();
+/* ─── URL validation ─────────────────────────────────────────────────────── */
+function getUrl() {
+    const url = document.getElementById('urlInput').value.trim();
+    if (!url) { toast('Paste a YouTube URL first.', 'error'); return null; }
+    try {
+        const p = new URL(url);
+        const ok = ['youtube.com','www.youtube.com','youtu.be','m.youtube.com','music.youtube.com'];
+        if (!ok.includes(p.hostname)) { toast('Only YouTube URLs are supported.', 'error'); return null; }
+    } catch { toast('That doesn\'t look like a valid URL.', 'error'); return null; }
+    return url;
+}
 
-    let html = "<h3>Select Quality</h3>";
+/* ─── Escape HTML ────────────────────────────────────────────────────────── */
+function esc(str) {
+    const d = document.createElement('div');
+    d.appendChild(document.createTextNode(String(str)));
+    return d.innerHTML;
+}
 
+/* ─── Preview ────────────────────────────────────────────────────────────── */
+async function handlePreview() {
+    const url = getUrl(); if (!url) return;
+    setLoading('btnPreview', true);
+    try {
+        const res  = await fetch('/preview-playlist', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({url}) });
+        if (!res.ok) throw new Error((await res.json().catch(()=>({}))).error || 'Preview failed');
+        const data = await res.json();
+        renderPreview(data);
+        toast('Preview loaded!', 'success');
+    } catch (err) {
+        toast(err.message || 'Preview failed.', 'error');
+    } finally {
+        setLoading('btnPreview', false);
+    }
+}
+
+function renderPreview(d) {
+    const thumb = d.thumbnail
+        ? `<img class="pthumb" src="${esc(d.thumbnail)}" alt="" onerror="this.style.display='none'">`
+        : `<div class="pthumb-ph">🎵</div>`;
+    const badge = d.isPlaylist
+        ? `<span class="pbadge">📋 Playlist · ${d.trackCount} tracks</span>`
+        : `<span class="pbadge">🎵 Single track</span>`;
+    const s = document.getElementById('previewSection');
+    s.innerHTML = `<div class="preview-card">
+        ${thumb}
+        <div class="pinfo">
+            <div class="ptitle">${esc(d.title)}</div>
+            <div class="pmeta">${esc(d.artist)}</div>
+            ${badge}
+        </div>
+    </div>`;
+    s.style.display = 'block';
+}
+
+/* ─── Formats / Quality ──────────────────────────────────────────────────── */
+async function handleFormats() {
+    const url = getUrl(); if (!url) return;
+    setLoading('btnFormats', true);
+    try {
+        const res = await fetch('/formats', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({url}) });
+        if (!res.ok) throw new Error((await res.json().catch(()=>({}))).error || 'Failed');
+        const formats = await res.json();
+        renderQuality(formats);
+        toast('Quality options loaded.', 'info');
+    } catch (err) {
+        toast(err.message || 'Could not load quality options.', 'error');
+    } finally {
+        setLoading('btnFormats', false);
+    }
+}
+
+function renderQuality(formats) {
+    const grid = document.getElementById('qualityGrid');
+    grid.innerHTML = '';
     formats.forEach(f => {
-        html += `
-            <div>
-                <input type="radio" name="quality" value="${f.abr}" onclick="selectedQuality='${f.abr}'">
-                ${f.abr} kbps - ${f.size}
-            </div>
-        `;
+        const b = document.createElement('button');
+        b.className = 'qbtn' + (String(f.abr) === selectedQuality ? ' active' : '');
+        b.textContent = `${f.abr} kbps${f.size !== 'Size varies' ? ' · '+f.size : ''}`;
+        b.onclick = () => {
+            selectedQuality = String(f.abr);
+            grid.querySelectorAll('.qbtn').forEach(x => x.classList.remove('active'));
+            b.classList.add('active');
+        };
+        grid.appendChild(b);
     });
-
-    document.getElementById('formatsBox').innerHTML = html;
+    document.getElementById('qualitySection').style.display = 'block';
 }
 
-function download() {
-    const url = document.getElementById('url').value;
+/* ─── Download ───────────────────────────────────────────────────────────── */
+function handleDownload() {
+    if (isDownloading) {
+        if (activeEvt) { activeEvt.close(); activeEvt = null; }
+        isDownloading = false;
+        lockAll(false);
+        document.getElementById('progressSection').style.display = 'none';
+        document.getElementById('btnDownload').querySelector('.lbl').textContent = '⬇ Download MP3';
+        toast('Download cancelled.', 'info');
+        return;
+    }
 
-    const bar = document.getElementById('bar');
-    const progressText = document.getElementById('progressText');
-    const sizeText = document.getElementById('sizeText');
-    const status = document.getElementById('status');
+    const url = getUrl(); if (!url) return;
 
-    status.innerText = "Downloading... ⏳";
+    isDownloading = true;
+    lockAll(true);
+    document.getElementById('btnDownload').disabled = false;   // keep cancel available
+    document.getElementById('btnDownload').querySelector('.lbl').textContent = '✕ Cancel';
 
-    const eventSource = new EventSource(
-        `/download-progress?url=${encodeURIComponent(url)}&quality=${selectedQuality}`
+    const progSection  = document.getElementById('progressSection');
+    const progBar      = document.getElementById('progBar');
+    const progPct      = document.getElementById('progPct');
+    const progLabel    = document.getElementById('progLabel');
+    const progDetail   = document.getElementById('progDetail');
+    const warningsLog  = document.getElementById('warningsLog');
+    const trackSection = document.getElementById('trackSection');
+
+    progSection.style.display  = 'block';
+    trackSection.style.display = 'none';
+    warningsLog.style.display  = 'none';
+    warningsLog.innerHTML      = '';
+    progBar.style.width        = '0%';
+    progPct.textContent        = '0%';
+    progLabel.textContent      = 'Downloading…';
+    progDetail.textContent     = 'Starting…';
+
+    const evtSrc = new EventSource(
+        `/download-progress?url=${encodeURIComponent(url)}&quality=${encodeURIComponent(selectedQuality)}`
     );
+    activeEvt = evtSrc;
 
-    eventSource.onmessage = (event) => {
-        const data = JSON.parse(event.data);
+    evtSrc.onmessage = e => {
+        let d;
+        try { d = JSON.parse(e.data); } catch { return; }
 
-        if (data.error) {
-            status.innerText = "❌ Error";
-            eventSource.close();
+        if (d.error) {
+            toast(d.message || 'Download failed.', 'error');
+            cleanup(false); return;
+        }
+
+        if (d.warning) {
+            warningsLog.style.display = 'block';
+            const p = document.createElement('p');
+            p.textContent = '⚠ ' + d.message;
+            warningsLog.appendChild(p);
             return;
         }
 
-        if (data.done) {
-            status.innerText = "✅ Done!";
-            window.location.href = `/file/${encodeURIComponent(data.fileName)}`;
-            eventSource.close();
+        if (d.done) {
+            progBar.style.width  = '100%';
+            progPct.textContent  = '100%';
+            progLabel.textContent = '✅ Complete!';
+            progDetail.textContent = `${d.trackCount} track(s) packed`;
+
+            currentSession = {
+                sessionId: d.sessionId,
+                fileName:  d.fileName,
+                albumName: d.albumName,
+                tracks:    d.tracks || []
+            };
+
+            renderTrackList(currentSession);
+            toast('Done! Choose tracks to download below.', 'success', 5000);
+            cleanup(true);
             return;
         }
 
-        bar.style.width = data.percent + "%";
-        progressText.innerText = data.percent + "%";
-        sizeText.innerText = "Size: " + data.size;
+        // Progress
+        const pct = parseFloat(d.percent) || 0;
+        progBar.style.width  = pct + '%';
+        progPct.textContent  = pct.toFixed(1) + '%';
+        if (d.title)   progLabel.textContent  = `Downloading: ${d.title}`;
+        if (d.current) progDetail.textContent = `Track ${d.current} of ${d.total}`;
+        if (d.status === 'fetching') progDetail.textContent = d.message || 'Fetching…';
+    };
+
+    evtSrc.onerror = () => {
+        if (isDownloading) { toast('Connection lost. Please retry.', 'error'); cleanup(false); }
     };
 }
+
+function cleanup(success) {
+    if (activeEvt) { activeEvt.close(); activeEvt = null; }
+    isDownloading = false;
+    lockAll(false);
+    document.getElementById('btnDownload').querySelector('.lbl').textContent = '⬇ Download MP3';
+    if (!success) document.getElementById('progressSection').style.display = 'none';
+}
+
+/* ─── Track list ─────────────────────────────────────────────────────────── */
+function renderTrackList(session) {
+    const section = document.getElementById('trackSection');
+    const list    = document.getElementById('trackList');
+    const heading = document.getElementById('trackHeading');
+
+    heading.textContent = `${session.albumName} — ${session.tracks.length} track${session.tracks.length !== 1 ? 's' : ''}`;
+    list.innerHTML = '';
+
+    session.tracks.forEach((t, i) => {
+        const row = document.createElement('div');
+        row.className = 'track-item';
+
+        const coverHtml = t.hasCover
+            ? `<div class="track-cover"><img src="/cover/${session.sessionId}/${i}" alt="" onerror="this.parentElement.textContent='🎵'"></div>`
+            : `<div class="track-cover">🎵</div>`;
+
+        row.innerHTML = `
+            <span class="track-num">${esc(t.stem.split(' - ')[0])}</span>
+            ${coverHtml}
+            <div class="track-info">
+                <div class="track-name">${esc(t.title)}</div>
+                <div class="track-meta">${esc(t.artist)}</div>
+            </div>
+            <span class="track-dur">${esc(t.durationFmt)}</span>
+            <button class="btn-dl-song" onclick="downloadSong(${i})">⬇ Song</button>
+        `;
+        list.appendChild(row);
+    });
+
+    section.style.display = 'block';
+}
+
+/* ─── Download individual song ───────────────────────────────────────────── */
+function downloadSong(trackIndex) {
+    if (!currentSession) return;
+    const t = currentSession.tracks[trackIndex];
+    if (!t) return;
+    const a = document.createElement('a');
+    a.href     = `/song/${encodeURIComponent(currentSession.sessionId)}/${trackIndex}`;
+    a.download = t.mp3Name;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    toast(`Downloading: ${t.title}`, 'success', 2500);
+}
+
+/* ─── Download full ZIP ──────────────────────────────────────────────────── */
+function downloadZip() {
+    if (!currentSession) return;
+    const a = document.createElement('a');
+    a.href     = `/file/${encodeURIComponent(currentSession.fileName)}`;
+    a.download = currentSession.fileName;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    toast('Downloading ZIP…', 'success', 2500);
+}
+
+/* ─── Enter key ──────────────────────────────────────────────────────────── */
+document.getElementById('urlInput').addEventListener('keydown', e => {
+    if (e.key === 'Enter') handlePreview();
+});
 </script>
 
 </body>
