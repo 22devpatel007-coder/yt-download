@@ -6,6 +6,11 @@ const path     = require('path');
 const fs       = require('fs');
 const archiver = require('archiver');
 
+let AdmZip;
+try { AdmZip = require('adm-zip'); } catch (e) {
+    console.warn('[WARN] adm-zip not installed — per-song download will fall back to ZIP redirect.');
+}
+
 const app  = express();
 const PORT = process.env.PORT || 3030;
 const FFMPEG_PATH = process.env.FFMPEG_PATH || 'ffmpeg';
@@ -39,7 +44,7 @@ function safeName(str) {
 }
 
 function tryUnlink(fp) {
-    try { if (fs.existsSync(fp)) fs.unlinkSync(fp); } catch {}
+    try { if (fp && fs.existsSync(fp)) fs.unlinkSync(fp); } catch {}
 }
 
 function getEntryUrl(entry, fallback) {
@@ -68,100 +73,53 @@ setInterval(() => {
     for (const [ip, e] of rlMap) if (e.start < cut) rlMap.delete(ip);
 }, 5 * 60_000);
 
-// ─── Session store (tracks completed downloads for per-song endpoint) ─────────
-// sessionId → { albumName, zipFile, entries[], createdAt }
+// ─── Session store ─────────────────────────────────────────────────────────────
+// sessionId → { albumName, zipFile?, flatZipFile?, entries[], createdAt }
 const sessions = new Map();
 setInterval(() => {
     const cut = Date.now() - 30 * 60_000;
-    for (const [id, s] of sessions) if (s.createdAt < cut) sessions.delete(id);
+    for (const [id, s] of sessions) {
+        if (s.createdAt < cut) {
+            if (s.zipFile)     tryUnlink(path.join(downloadDir, s.zipFile));
+            if (s.flatZipFile) tryUnlink(path.join(downloadDir, s.flatZipFile));
+            sessions.delete(id);
+        }
+    }
 }, 10 * 60_000);
 
-// ─── Routes ────────────────────────────────────────────────────────────────────
-
-/* ── Preview (single + playlist) ─────────────────────────────────────────── */
-app.post('/preview-playlist', rateLimit, async (req, res) => {
-    const { url } = req.body;
-    if (!isValidYouTubeUrl(url)) return res.status(400).json({ error: 'Invalid URL.' });
-    try {
-        const info    = await ytDlp(url, { dumpSingleJson:true, flatPlaylist:true, socketTimeout:30 });
-        const entries = info.entries || [info];
-        res.json({
-            title:      info.title    || 'Unknown',
-            artist:     info.uploader || 'Unknown',
-            thumbnail:  info.thumbnail || entries[0]?.thumbnail || '',
-            isPlaylist: !!info.entries,
-            trackCount: entries.length
-        });
-    } catch (err) {
-        console.error('[PREVIEW]', err.message);
-        res.status(500).json({ error: 'Could not fetch info.' });
-    }
-});
-
-/* ── Formats ──────────────────────────────────────────────────────────────── */
-app.post('/formats', rateLimit, async (req, res) => {
-    const { url } = req.body;
-    if (!isValidYouTubeUrl(url)) return res.status(400).json({ error: 'Invalid URL.' });
-    try {
-        const info  = await ytDlp(url, { dumpSingleJson:true, noPlaylist:true, socketTimeout:30 });
-        const byAbr = (info.formats||[])
-            .filter(f => f.abr && f.filesize)
-            .reduce((a,f) => { const k=Math.round(f.abr); if(!a[k]) a[k]=f; return a; }, {});
-        res.json([320,256,192,128,96].map(abr => ({
-            abr,
-            size: byAbr[abr] ? (byAbr[abr].filesize/1048576).toFixed(2)+' MB' : 'Size varies'
-        })));
-    } catch (err) {
-        console.error('[FORMATS]', err.message);
-        res.status(500).json({ error: 'Could not fetch format info.' });
-    }
-});
-
-/* ── Download with SSE progress ───────────────────────────────────────────────
-   ZIP structure:
-     your-songs.zip
-     ├── songs/
-     │   ├── 01 - Song Title.mp3
-     │   └── 02 - Another Song.mp3
-     ├── covers/              (optional, only if thumbnail found)
-     │   └── 01 - Song Title.jpg
-     └── manifest.json        (flat array per spec)
-─────────────────────────────────────────────────────────────────────────────── */
-app.get('/download-progress', rateLimit, async (req, res) => {
-    const { url, quality = '192' } = req.query;
-    if (!isValidYouTubeUrl(url)) return res.status(400).json({ error: 'Invalid URL.' });
-
-    const safeQ = ['96','128','192','256','320'].includes(quality) ? quality : '192';
-
-    res.setHeader('Content-Type',      'text/event-stream');
-    res.setHeader('Cache-Control',     'no-cache');
-    res.setHeader('Connection',        'keep-alive');
-    res.setHeader('X-Accel-Buffering', 'no');
-    res.flushHeaders();
-
-    const send = d => { try { res.write(`data: ${JSON.stringify(d)}\n\n`); } catch {} };
+// ─── Core download engine ─────────────────────────────────────────────────────
+// mode: 'structured' → songs/ covers/ manifest.json inside ZIP
+// mode: 'flat'       → all .mp3 files at zip root, no covers, no manifest
+async function runDownload(url, safeQ, mode, res) {
+    const send = d => {
+        try { if (!res.writableEnded) res.write(`data: ${JSON.stringify(d)}\n\n`); } catch {}
+    };
 
     const tempFiles = [];
     let zipPath = null;
 
     try {
-        send({ status:'fetching', message:'Fetching info…' });
+        send({ status: 'fetching', message: 'Fetching info…' });
 
-        const info    = await ytDlp(url, { dumpSingleJson:true, flatPlaylist:true, socketTimeout:30 });
-        const entries = info.entries || [info];
+        const info      = await ytDlp(url, { dumpSingleJson: true, flatPlaylist: true, socketTimeout: 30 });
+        const entries   = info.entries || [info];
         const albumName = safeName(info.title || 'download');
         const sessionId = `${Date.now()}-${Math.random().toString(36).slice(2,8)}`;
 
-        zipPath = path.join(downloadDir, `${albumName}-${sessionId}.zip`);
+        const suffix = mode === 'flat' ? '-flat' : '';
+        zipPath = path.join(downloadDir, `${albumName}${suffix}-${sessionId}.zip`);
 
         const writeStream = fs.createWriteStream(zipPath);
-        const archive     = archiver('zip', { zlib:{ level:6 } });
-        archive.on('error', err => { console.error('[ARCHIVE]', err.message); send({ error:true, message:'Archive failed.' }); res.end(); });
+        const archive     = archiver('zip', { zlib: { level: 6 } });
+        archive.on('error', err => {
+            console.error('[ARCHIVE]', err.message);
+            send({ error: true, message: 'Archive failed.' });
+            if (!res.writableEnded) res.end();
+        });
         archive.pipe(writeStream);
 
-        // ── Spec-exact manifest (flat array) ──
-        const manifest       = [];   // what goes into manifest.json
-        const sessionEntries = [];   // what goes into the session for per-song download
+        const manifest       = [];
+        const sessionEntries = [];
 
         for (let i = 0; i < entries.length; i++) {
             if (res.destroyed || res.writableEnded) break;
@@ -176,27 +134,26 @@ app.get('/download-progress', rateLimit, async (req, res) => {
             const genre    = v.genre    || 'Unknown';
             const duration = Math.round(v.duration || 0);
 
-            // ── Filenames match spec exactly ──
-            const stem      = `${index} - ${title}`;   // e.g. "01 - Song Title"
-            const mp3Name   = `${stem}.mp3`;            // songs/ subfolder
-            const coverName = `${stem}.jpg`;            // covers/ subfolder (always jpg)
+            const mp3Name   = `${index} - ${title}.mp3`;
+            const coverName = `${index} - ${title}.jpg`;
 
             const ts        = Date.now();
-            const songPath  = path.join(downloadDir, `tmp-${ts}-${mp3Name}`);
-            const coverPath = path.join(downloadDir, `tmp-${ts}-${coverName}`);
-            const coverBase = path.join(downloadDir, `tmp-${ts}-${stem}`);
+            const uid       = Math.random().toString(36).slice(2,6);
+            const songPath  = path.join(downloadDir, `tmp-${ts}-${uid}.mp3`);
+            const coverBase = path.join(downloadDir, `tmp-${ts}-${uid}-cover`);
+            const coverPath = path.join(downloadDir, `tmp-${ts}-${uid}-cover.jpg`);
 
             tempFiles.push(songPath, coverPath);
 
             send({
                 percent: ((i / entries.length) * 100).toFixed(1),
-                current: i+1, total: entries.length,
+                current: i + 1, total: entries.length,
                 title, status: 'downloading'
             });
 
-            console.log(`⬇️  [${i+1}/${entries.length}] ${title}`);
+            console.log(`⬇️  [${i+1}/${entries.length}] ${title} (${mode})`);
 
-            /* ── Audio ── */
+            // ── Audio ──
             try {
                 await ytDlp(entryUrl, {
                     extractAudio:   true,
@@ -212,59 +169,65 @@ app.get('/download-progress', rateLimit, async (req, res) => {
                 });
             } catch (err) {
                 console.error(`[AUDIO FAIL] ${title}:`, err.message);
-                send({ warning:true, message:`Skipped: ${title} (download failed)` });
+                send({ warning: true, message: `Skipped: ${title} (download failed)` });
                 continue;
             }
 
-            /* ── Cover (optional) ── */
+            // ── Cover art (structured mode only) ──
             let hasCover = false;
-            try {
-                await ytDlp(entryUrl, {
-                    skipDownload:      true,
-                    writeThumbnail:    true,
-                    convertThumbnails: 'jpg',
-                    output:            coverBase,
-                    ffmpegLocation:    FFMPEG_PATH,
-                    noPlaylist:        true,
-                    socketTimeout:     30
-                });
-                const found = fs.readdirSync(downloadDir)
-                    .find(f => f.startsWith(path.basename(coverBase)) && f.endsWith('.jpg'));
-                if (found) {
-                    fs.renameSync(path.join(downloadDir, found), coverPath);
-                    hasCover = true;
-                }
-            } catch { console.log(`⚠️  Cover skipped: ${title}`); }
+            if (mode === 'structured') {
+                try {
+                    await ytDlp(entryUrl, {
+                        skipDownload:      true,
+                        writeThumbnail:    true,
+                        convertThumbnails: 'jpg',
+                        output:            coverBase,
+                        ffmpegLocation:    FFMPEG_PATH,
+                        noPlaylist:        true,
+                        socketTimeout:     30
+                    });
+                    if (fs.existsSync(coverPath)) {
+                        hasCover = true;
+                    } else {
+                        const base  = path.basename(coverBase);
+                        const found = fs.readdirSync(downloadDir)
+                            .find(f => f.startsWith(base) && f.endsWith('.jpg'));
+                        if (found) {
+                            fs.renameSync(path.join(downloadDir, found), coverPath);
+                            hasCover = true;
+                        }
+                    }
+                } catch { console.log(`⚠️  Cover skipped: ${title}`); }
+            }
 
-            /* ── ZIP entries ──
-               songs/01 - Song Title.mp3
-               covers/01 - Song Title.jpg  (only if cover found)
-            ── */
-            if (fs.existsSync(songPath))               archive.file(songPath,  { name:`songs/${mp3Name}` });
-            if (hasCover && fs.existsSync(coverPath))  archive.file(coverPath, { name:`covers/${coverName}` });
+            // ── Add to archive ──
+            if (fs.existsSync(songPath)) {
+                const archiveName = mode === 'flat' ? mp3Name : `songs/${mp3Name}`;
+                archive.file(songPath, { name: archiveName });
+            }
+            if (mode === 'structured' && hasCover && fs.existsSync(coverPath)) {
+                archive.file(coverPath, { name: `covers/${coverName}` });
+            }
 
-            /* ── manifest.json entry (spec-exact flat array item) ── */
-            manifest.push({
-                file:     mp3Name,
-                title,
-                artist,
-                genre,
-                duration              // seconds
-            });
-
+            manifest.push({ file: mp3Name, title, artist, genre, duration });
             sessionEntries.push({
                 idx: i,
-                stem, mp3Name, coverName, hasCover,
+                trackNum: index,
+                mp3Name, coverName,
+                hasCover: mode === 'structured' ? hasCover : false,
                 title, artist, genre,
                 duration, durationFmt: fmtDuration(duration)
             });
         }
 
-        /* ── manifest.json — flat array, root of zip ── */
-        archive.append(Buffer.from(JSON.stringify(manifest, null, 2), 'utf-8'),
-                       { name: 'manifest.json' });
+        // manifest.json only in structured mode
+        if (mode === 'structured') {
+            archive.append(
+                Buffer.from(JSON.stringify(manifest, null, 2), 'utf-8'),
+                { name: 'manifest.json' }
+            );
+        }
 
-        /* ── Finalize zip ── */
         await new Promise((resolve, reject) => {
             writeStream.on('close', resolve);
             writeStream.on('error', reject);
@@ -273,39 +236,104 @@ app.get('/download-progress', rateLimit, async (req, res) => {
 
         tempFiles.forEach(tryUnlink);
 
-        // Store session so /song endpoint can serve individual tracks
-        sessions.set(sessionId, {
-            albumName,
-            zipFile:   path.basename(zipPath),
-            entries:   sessionEntries,
-            createdAt: Date.now()
-        });
+        // Upsert session — one sessionId can hold both zip types
+        const existing    = sessions.get(sessionId) || { albumName, entries: sessionEntries, createdAt: Date.now() };
+        const sessionData = { ...existing, albumName, entries: sessionEntries, createdAt: Date.now() };
+        if (mode === 'structured') sessionData.zipFile     = path.basename(zipPath);
+        if (mode === 'flat')       sessionData.flatZipFile = path.basename(zipPath);
+        sessions.set(sessionId, sessionData);
 
         send({
             done:       true,
             percent:    '100.0',
             sessionId,
+            mode,
             fileName:   path.basename(zipPath),
             albumName,
             trackCount: manifest.length,
-            tracks:     sessionEntries    // UI uses this to build the track list
+            tracks:     sessionEntries
         });
 
-        res.end();
-
-        // Auto-delete zip after 30 min
+        if (!res.writableEnded) res.end();
         setTimeout(() => tryUnlink(zipPath), 30 * 60_000);
 
     } catch (err) {
-        console.error('[DOWNLOAD-PROGRESS]', err.message);
+        console.error('[DOWNLOAD]', err.message);
         tempFiles.forEach(tryUnlink);
         if (zipPath) tryUnlink(zipPath);
-        send({ error:true, message:'Download failed. Please try again.' });
-        res.end();
+        send({ error: true, message: 'Download failed. Please try again.' });
+        if (!res.writableEnded) res.end();
+    }
+}
+
+// ─── Routes ────────────────────────────────────────────────────────────────────
+
+/* ── Preview ── */
+app.post('/preview-playlist', rateLimit, async (req, res) => {
+    const { url } = req.body;
+    if (!isValidYouTubeUrl(url)) return res.status(400).json({ error: 'Invalid URL.' });
+    try {
+        const info    = await ytDlp(url, { dumpSingleJson: true, flatPlaylist: true, socketTimeout: 30 });
+        const entries = info.entries || [info];
+        res.json({
+            title:      info.title    || 'Unknown',
+            artist:     info.uploader || 'Unknown',
+            thumbnail:  info.thumbnail || entries[0]?.thumbnail || '',
+            isPlaylist: !!info.entries,
+            trackCount: entries.length
+        });
+    } catch (err) {
+        console.error('[PREVIEW]', err.message);
+        res.status(500).json({ error: 'Could not fetch info.' });
     }
 });
 
-/* ── Download ZIP ─────────────────────────────────────────────────────────── */
+/* ── Formats ── */
+app.post('/formats', rateLimit, async (req, res) => {
+    const { url } = req.body;
+    if (!isValidYouTubeUrl(url)) return res.status(400).json({ error: 'Invalid URL.' });
+    try {
+        const info  = await ytDlp(url, { dumpSingleJson: true, noPlaylist: true, socketTimeout: 30 });
+        const byAbr = (info.formats || [])
+            .filter(f => f.abr && f.filesize)
+            .reduce((a, f) => { const k = Math.round(f.abr); if (!a[k]) a[k] = f; return a; }, {});
+        res.json([320, 256, 192, 128, 96].map(abr => ({
+            abr,
+            size: byAbr[abr] ? (byAbr[abr].filesize / 1048576).toFixed(2) + ' MB' : 'Size varies'
+        })));
+    } catch (err) {
+        console.error('[FORMATS]', err.message);
+        res.status(500).json({ error: 'Could not fetch format info.' });
+    }
+});
+
+/* ── Download: structured ZIP (songs/ + covers/ + manifest.json) ── */
+app.get('/download-progress', rateLimit, async (req, res) => {
+    const { url, quality = '192' } = req.query;
+    if (!isValidYouTubeUrl(url)) return res.status(400).json({ error: 'Invalid URL.' });
+    const safeQ = ['96','128','192','256','320'].includes(quality) ? quality : '192';
+    res.setHeader('Content-Type',      'text/event-stream');
+    res.setHeader('Cache-Control',     'no-cache');
+    res.setHeader('Connection',        'keep-alive');
+    res.setHeader('X-Accel-Buffering', 'no');
+    res.flushHeaders();
+    await runDownload(url, safeQ, 'structured', res);
+});
+
+/* ── Download: flat ZIP (all .mp3 files at root, no covers, no manifest) ── */
+app.get('/download-flat', rateLimit, async (req, res) => {
+    const { url, quality = '192' } = req.query;
+    if (!isValidYouTubeUrl(url)) return res.status(400).json({ error: 'Invalid URL.' });
+    const safeQ = ['96','128','192','256','320'].includes(quality) ? quality : '192';
+    res.setHeader('Content-Type',      'text/event-stream');
+    res.setHeader('Cache-Control',     'no-cache');
+    res.setHeader('Connection',        'keep-alive');
+    res.setHeader('X-Accel-Buffering', 'no');
+    res.flushHeaders();
+    await runDownload(url, safeQ, 'flat', res);
+});
+
+/* ── Serve ZIP file ── */
 app.get('/file/:name', (req, res) => {
     const safe = path.basename(req.params.name);
     const fp   = path.resolve(downloadDir, safe);
@@ -314,10 +342,7 @@ app.get('/file/:name', (req, res) => {
     res.download(fp);
 });
 
-/* ── Download single song from ZIP ───────────────────────────────────────────
-   GET /song/:sessionId/:trackIndex
-   Extracts and streams the individual .mp3 from the zip.
-─────────────────────────────────────────────────────────────────────────────── */
+/* ── Serve individual song from session ZIP ── */
 app.get('/song/:sessionId/:index', (req, res) => {
     const session = sessions.get(req.params.sessionId);
     if (!session) return res.status(404).json({ error: 'Session expired.' });
@@ -326,15 +351,23 @@ app.get('/song/:sessionId/:index', (req, res) => {
     const entry = session.entries[idx];
     if (!entry)  return res.status(404).json({ error: 'Track not found.' });
 
-    const zipPath = path.resolve(downloadDir, session.zipFile);
+    // Prefer structured zip, fall back to flat zip
+    const zipFile = session.zipFile || session.flatZipFile;
+    if (!zipFile) return res.status(404).json({ error: 'No archive found.' });
+
+    const zipPath = path.resolve(downloadDir, zipFile);
     if (!zipPath.startsWith(path.resolve(downloadDir))) return res.status(403).send('Forbidden');
     if (!fs.existsSync(zipPath)) return res.status(404).json({ error: 'ZIP expired.' });
 
+    if (!AdmZip) {
+        console.warn('[SONG] adm-zip unavailable, falling back to ZIP redirect');
+        return res.redirect(`/file/${encodeURIComponent(zipFile)}`);
+    }
+
     try {
-        // adm-zip: npm install adm-zip
-        const AdmZip  = require('adm-zip');
-        const zip     = new AdmZip(zipPath);
-        const zipEntry = zip.getEntry(`songs/${entry.mp3Name}`);
+        const zip = new AdmZip(zipPath);
+        // Try structured path first, then flat root
+        const zipEntry = zip.getEntry(`songs/${entry.mp3Name}`) || zip.getEntry(entry.mp3Name);
         if (!zipEntry) return res.status(404).json({ error: 'Song not in archive.' });
 
         const data = zip.readFile(zipEntry);
@@ -343,16 +376,15 @@ app.get('/song/:sessionId/:index', (req, res) => {
         res.setHeader('Content-Length',      data.length);
         res.send(data);
     } catch (err) {
-        // Fallback: redirect to whole-zip download if adm-zip is unavailable
-        console.warn('[SONG] adm-zip unavailable, falling back:', err.message);
-        res.redirect(`/file/${encodeURIComponent(session.zipFile)}`);
+        console.warn('[SONG] read failed, falling back:', err.message);
+        res.redirect(`/file/${encodeURIComponent(zipFile)}`);
     }
 });
 
-/* ── Serve cover image from ZIP ───────────────────────────────────────────── */
+/* ── Serve cover image from structured ZIP ── */
 app.get('/cover/:sessionId/:index', (req, res) => {
     const session = sessions.get(req.params.sessionId);
-    if (!session) return res.status(404).end();
+    if (!session || !session.zipFile) return res.status(404).end();
 
     const idx   = parseInt(req.params.index, 10);
     const entry = session.entries[idx];
@@ -361,9 +393,9 @@ app.get('/cover/:sessionId/:index', (req, res) => {
     const zipPath = path.resolve(downloadDir, session.zipFile);
     if (!zipPath.startsWith(path.resolve(downloadDir))) return res.status(403).end();
     if (!fs.existsSync(zipPath)) return res.status(404).end();
+    if (!AdmZip) return res.status(404).end();
 
     try {
-        const AdmZip   = require('adm-zip');
         const zip      = new AdmZip(zipPath);
         const zipEntry = zip.getEntry(`covers/${entry.coverName}`);
         if (!zipEntry) return res.status(404).end();
@@ -376,11 +408,14 @@ app.get('/cover/:sessionId/:index', (req, res) => {
     } catch { res.status(404).end(); }
 });
 
-/* ── Health ───────────────────────────────────────────────────────────────── */
-app.get('/health', (req, res) => res.json({ status:'ok', uptime:process.uptime() }));
+/* ── Health ── */
+app.get('/health', (req, res) => res.json({ status: 'ok', uptime: process.uptime() }));
 
-app.use((req, res) => res.status(404).json({ error:'Not found' }));
-app.use((err, req, res, next) => { console.error('[UNHANDLED]', err); res.status(500).json({ error:'Internal server error' }); });
+app.use((req, res) => res.status(404).json({ error: 'Not found' }));
+app.use((err, req, res, next) => {
+    console.error('[UNHANDLED]', err);
+    res.status(500).json({ error: 'Internal server error' });
+});
 
 // ─── Start / shutdown ──────────────────────────────────────────────────────────
 const server = app.listen(PORT, () => console.log(`🚀  http://localhost:${PORT}`));
