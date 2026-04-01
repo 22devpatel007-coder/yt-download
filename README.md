@@ -75,6 +75,3 @@ Open your browser and navigate to this URL to use the web interface.
 - **[adm-zip](https://github.com/cthackers/adm-zip)**: Serves individual files dynamically from completed ZIP archives.
 - **FFmpeg**: For format conversion, cover art embedding, and audio extraction.
 
-## License
-
-ISC License
