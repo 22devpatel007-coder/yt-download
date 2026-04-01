@@ -1,0 +1,128 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>YouTube to MP3</title>
+</head>
+
+<body style="text-align:center; padding:50px; font-family:Arial; background:#111; color:white;">
+
+    <h1>🎵 YouTube Downloader</h1>
+
+    <input 
+        type="text" 
+        id="url" 
+        placeholder="Paste YouTube video or playlist"
+        style="width:350px; padding:10px;"
+    />
+
+    <br><br>
+
+    <button onclick="preview()">Preview</button>
+    <button onclick="loadFormats()">Show Quality</button>
+    <button onclick="download()">Download</button>
+
+    <br><br>
+
+    <!-- Preview -->
+    <div id="previewBox"></div>
+
+    <!-- Quality list -->
+    <div id="formatsBox"></div>
+
+    <!-- Progress -->
+    <div style="width:350px; margin:auto;">
+        <div style="background:#444; height:20px;">
+            <div id="bar" style="background:#00c853; width:0%; height:20px;"></div>
+        </div>
+        <p id="progressText">0%</p>
+        <p id="sizeText"></p>
+    </div>
+
+    <p id="status"></p>
+
+<script>
+let selectedQuality = "192";
+
+async function preview() {
+    const url = document.getElementById('url').value;
+
+    const res = await fetch('/preview', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ url })
+    });
+
+    const data = await res.json();
+
+    document.getElementById('previewBox').innerHTML = `
+        <h3>${data.title}</h3>
+        <p>${data.artist}</p>
+        <img src="${data.thumbnail}" width="300"/>
+    `;
+}
+
+// 🎯 LOAD ALL QUALITIES WITH SIZE
+async function loadFormats() {
+    const url = document.getElementById('url').value;
+
+    const res = await fetch('/formats', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ url })
+    });
+
+    const formats = await res.json();
+
+    let html = "<h3>Select Quality</h3>";
+
+    formats.forEach(f => {
+        html += `
+            <div>
+                <input type="radio" name="quality" value="${f.abr}" onclick="selectedQuality='${f.abr}'">
+                ${f.abr} kbps - ${f.size}
+            </div>
+        `;
+    });
+
+    document.getElementById('formatsBox').innerHTML = html;
+}
+
+function download() {
+    const url = document.getElementById('url').value;
+
+    const bar = document.getElementById('bar');
+    const progressText = document.getElementById('progressText');
+    const sizeText = document.getElementById('sizeText');
+    const status = document.getElementById('status');
+
+    status.innerText = "Downloading... ⏳";
+
+    const eventSource = new EventSource(
+        `/download-progress?url=${encodeURIComponent(url)}&quality=${selectedQuality}`
+    );
+
+    eventSource.onmessage = (event) => {
+        const data = JSON.parse(event.data);
+
+        if (data.error) {
+            status.innerText = "❌ Error";
+            eventSource.close();
+            return;
+        }
+
+        if (data.done) {
+            status.innerText = "✅ Done!";
+            window.location.href = `/file/${encodeURIComponent(data.fileName)}`;
+            eventSource.close();
+            return;
+        }
+
+        bar.style.width = data.percent + "%";
+        progressText.innerText = data.percent + "%";
+        sizeText.innerText = "Size: " + data.size;
+    };
+}
+</script>
+
+</body>
+</html>
