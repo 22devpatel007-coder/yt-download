@@ -13,6 +13,7 @@
   "type": "commonjs",
   "dependencies": {
     "archiver": "^7.0.1",
+    "dotenv": "^17.3.1",
     "express": "^5.2.1",
     "yt-dlp-exec": "^1.0.2"
   }

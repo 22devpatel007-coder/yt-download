@@ -1,3 +1,5 @@
+require('dotenv').config();
+
 const express = require('express');
 const ytDlp = require('yt-dlp-exec');
 const path = require('path');
@@ -5,10 +7,10 @@ const fs = require('fs');
 const archiver = require('archiver');
 
 const app = express();
-const PORT = 3030;
+const PORT = process.env.PORT || 3030;
 
-// ✅ IMPORTANT: full path to ffmpeg.exe
-const FFMPEG_PATH = "C:/ffmpeg-2026-03-30-git-e54e117998-essentials_build/bin/ffmpeg.exe";
+// ✅ IMPORTANT: full path to ffmpeg.exe from .env
+const FFMPEG_PATH = process.env.FFMPEG_PATH || "ffmpeg";
 
 app.use(express.json());
 app.use(express.static('public'));
