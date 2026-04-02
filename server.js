@@ -34,13 +34,13 @@ function isValidYouTubeUrl(url) {
     if (!url || typeof url !== 'string') return false;
     try {
         const p = new URL(url);
-        return ['youtube.com','www.youtube.com','youtu.be','m.youtube.com','music.youtube.com']
+        return ['youtube.com', 'www.youtube.com', 'youtu.be', 'm.youtube.com', 'music.youtube.com']
             .includes(p.hostname);
     } catch { return false; }
 }
 
 function safeName(str) {
-    return (str || 'unknown').replace(/[<>:"/\\|?*\x00-\x1f]+/g,'').trim().slice(0,180) || 'unknown';
+    return (str || 'unknown').replace(/[<>:"/\\|?*\x00-\x1f]+/g, '').trim().slice(0, 180) || 'unknown';
 }
 
 function tryUnlink(fp) {
@@ -52,15 +52,15 @@ function getEntryUrl(entry, fallback) {
 }
 
 function fmtDuration(sec) {
-    const s = Math.round(sec || 0), m = Math.floor(s/60), h = Math.floor(m/60);
-    if (h > 0) return `${h}:${String(m%60).padStart(2,'0')}:${String(s%60).padStart(2,'0')}`;
-    return `${m}:${String(s%60).padStart(2,'0')}`;
+    const s = Math.round(sec || 0), m = Math.floor(s / 60), h = Math.floor(m / 60);
+    if (h > 0) return `${h}:${String(m % 60).padStart(2, '0')}:${String(s % 60).padStart(2, '0')}`;
+    return `${m}:${String(s % 60).padStart(2, '0')}`;
 }
 
-// ─── Rate limiter (15 req / 60 s per IP) ─────────────────────────────────────
+// ─── Rate limiter (15 req / 60 s per IP) ──────────────────────────────────────
 const rlMap = new Map();
 function rateLimit(req, res, next) {
-    const ip = req.ip || req.socket.remoteAddress || 'x';
+    const ip  = req.ip || req.socket.remoteAddress || 'x';
     const now = Date.now();
     const e   = rlMap.get(ip) || { count: 0, start: now };
     if (now - e.start > 60_000) { e.count = 1; e.start = now; } else e.count++;
@@ -87,9 +87,28 @@ setInterval(() => {
     }
 }, 10 * 60_000);
 
-// ─── Core download engine ─────────────────────────────────────────────────────
-// mode: 'structured' → songs/ covers/ manifest.json inside ZIP
-// mode: 'flat'       → all .mp3 files at zip root, no covers, no manifest
+// ─── Core download engine ──────────────────────────────────────────────────────
+//
+//  mode: 'structured'
+//    ZIP layout:
+//      songs/
+//        01 - Title.mp3
+//        02 - Title.mp3
+//      covers/               ← one .jpg per track (when available)
+//        01 - Title.jpg
+//        02 - Title.jpg
+//      manifest.json         ← [{ file, title, artist, genre, duration }, …]
+//
+//  mode: 'flat'
+//    ZIP layout:
+//      01 - Title.mp3
+//      02 - Title.mp3
+//
+//  MP3s and JPGs are pre-compressed formats — running zlib over them saves 0-2%
+//  while adding significant CPU time on large playlists. store:true skips deflate
+//  entirely, making archive creation near-instant without any quality trade-off.
+//  Only manifest.json (small plain text) benefits from compression.
+//
 async function runDownload(url, safeQ, mode, res) {
     const send = d => {
         try { if (!res.writableEnded) res.write(`data: ${JSON.stringify(d)}\n\n`); } catch {}
@@ -99,18 +118,22 @@ async function runDownload(url, safeQ, mode, res) {
     let zipPath = null;
 
     try {
-        send({ status: 'fetching', message: 'Fetching info…' });
+        send({ status: 'fetching', message: 'Fetching playlist info…' });
 
         const info      = await ytDlp(url, { dumpSingleJson: true, flatPlaylist: true, socketTimeout: 30 });
         const entries   = info.entries || [info];
         const albumName = safeName(info.title || 'download');
-        const sessionId = `${Date.now()}-${Math.random().toString(36).slice(2,8)}`;
+        const sessionId = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 
-        const suffix = mode === 'flat' ? '-flat' : '';
-        zipPath = path.join(downloadDir, `${albumName}${suffix}-${sessionId}.zip`);
+        const suffix  = mode === 'flat' ? '-flat' : '';
+        zipPath       = path.join(downloadDir, `${albumName}${suffix}-${sessionId}.zip`);
 
         const writeStream = fs.createWriteStream(zipPath);
-        const archive     = archiver('zip', { zlib: { level: 6 } });
+
+        // store: true — skip deflate for all entries. Per-entry store:true below
+        // is belt-and-suspenders in case this global option changes later.
+        const archive = archiver('zip', { store: true });
+
         archive.on('error', err => {
             console.error('[ARCHIVE]', err.message);
             send({ error: true, message: 'Archive failed.' });
@@ -126,19 +149,22 @@ async function runDownload(url, safeQ, mode, res) {
 
             const v        = entries[i];
             const entryUrl = getEntryUrl(v, url);
-            if (!entryUrl) { console.warn(`[SKIP] Entry ${i+1}: no URL`); continue; }
+            if (!entryUrl) { console.warn(`[SKIP] Entry ${i + 1}: no URL`); continue; }
 
-            const index    = String(i+1).padStart(2,'0');
+            const index    = String(i + 1).padStart(2, '0');
             const title    = safeName(v.title || `Track ${index}`);
             const artist   = v.uploader || v.channel || 'Unknown Artist';
             const genre    = v.genre    || 'Unknown';
             const duration = Math.round(v.duration || 0);
 
-            const mp3Name   = `${index} - ${title}.mp3`;
-            const coverName = `${index} - ${title}.jpg`;
+            // Stem is shared between mp3 and cover so matching is always unambiguous:
+            //   songs/01 - Title.mp3  ↔  covers/01 - Title.jpg
+            const stem      = `${index} - ${title}`;
+            const mp3Name   = `${stem}.mp3`;
+            const coverName = `${stem}.jpg`;
 
             const ts        = Date.now();
-            const uid       = Math.random().toString(36).slice(2,6);
+            const uid       = Math.random().toString(36).slice(2, 6);
             const songPath  = path.join(downloadDir, `tmp-${ts}-${uid}.mp3`);
             const coverBase = path.join(downloadDir, `tmp-${ts}-${uid}-cover`);
             const coverPath = path.join(downloadDir, `tmp-${ts}-${uid}-cover.jpg`);
@@ -147,13 +173,15 @@ async function runDownload(url, safeQ, mode, res) {
 
             send({
                 percent: ((i / entries.length) * 100).toFixed(1),
-                current: i + 1, total: entries.length,
-                title, status: 'downloading'
+                current: i + 1,
+                total:   entries.length,
+                title,
+                status:  'downloading',
             });
 
-            console.log(`⬇️  [${i+1}/${entries.length}] ${title} (${mode})`);
+            console.log(`⬇️  [${i + 1}/${entries.length}] ${title} (${mode})`);
 
-            // ── Audio ──
+            // ── Audio ─────────────────────────────────────────────────────────
             try {
                 await ytDlp(entryUrl, {
                     extractAudio:   true,
@@ -165,7 +193,7 @@ async function runDownload(url, safeQ, mode, res) {
                     embedThumbnail: true,
                     noPlaylist:     true,
                     forceOverwrite: true,
-                    socketTimeout:  60
+                    socketTimeout:  60,
                 });
             } catch (err) {
                 console.error(`[AUDIO FAIL] ${title}:`, err.message);
@@ -173,7 +201,14 @@ async function runDownload(url, safeQ, mode, res) {
                 continue;
             }
 
-            // ── Cover art (structured mode only) ──
+            // ── Cover art (structured mode only) ─────────────────────────────
+            //
+            //  yt-dlp writes thumbnails with unpredictable suffixes depending on
+            //  the video source (e.g. coverBase.jpg, coverBase.webp,
+            //  coverBase.jpg.webp). We scan downloadDir for any file that starts
+            //  with the base name and ends with a recognised image extension, then
+            //  rename it to a canonical .jpg path before adding to the archive.
+            //
             let hasCover = false;
             if (mode === 'structured') {
                 try {
@@ -184,43 +219,75 @@ async function runDownload(url, safeQ, mode, res) {
                         output:            coverBase,
                         ffmpegLocation:    FFMPEG_PATH,
                         noPlaylist:        true,
-                        socketTimeout:     30
+                        socketTimeout:     30,
                     });
-                    if (fs.existsSync(coverPath)) {
-                        hasCover = true;
-                    } else {
-                        const base  = path.basename(coverBase);
-                        const found = fs.readdirSync(downloadDir)
-                            .find(f => f.startsWith(base) && f.endsWith('.jpg'));
-                        if (found) {
-                            fs.renameSync(path.join(downloadDir, found), coverPath);
-                            hasCover = true;
-                        }
+
+                    const baseFile = path.basename(coverBase);
+                    const found    = fs.readdirSync(downloadDir)
+                        .find(f => f.startsWith(baseFile) && /\.(jpg|jpeg|png|webp)$/i.test(f));
+
+                    if (found) {
+                        const src = path.join(downloadDir, found);
+                        if (src !== coverPath) fs.renameSync(src, coverPath);
+                        hasCover = fs.existsSync(coverPath);
                     }
-                } catch { console.log(`⚠️  Cover skipped: ${title}`); }
+                } catch (e) {
+                    console.log(`⚠️  Cover skipped for: ${title} — ${e.message}`);
+                }
             }
 
-            // ── Add to archive ──
+            // ── Add to archive ────────────────────────────────────────────────
+            //
+            //  store: true on each file entry is belt-and-suspenders — it ensures
+            //  no compression is attempted on binary files regardless of the global
+            //  archiver option.
+            //
             if (fs.existsSync(songPath)) {
                 const archiveName = mode === 'flat' ? mp3Name : `songs/${mp3Name}`;
-                archive.file(songPath, { name: archiveName });
-            }
-            if (mode === 'structured' && hasCover && fs.existsSync(coverPath)) {
-                archive.file(coverPath, { name: `covers/${coverName}` });
+                archive.file(songPath, { name: archiveName, store: true });
             }
 
-            manifest.push({ file: mp3Name, title, artist, genre, duration });
+            if (mode === 'structured' && hasCover && fs.existsSync(coverPath)) {
+                archive.file(coverPath, { name: `covers/${coverName}`, store: true });
+            }
+
+            // ── Manifest entry ────────────────────────────────────────────────
+            manifest.push({
+                file:     mp3Name,   // filename only — matches songs/ entry
+                title,
+                artist,
+                genre,
+                duration,            // seconds (integer)
+            });
+
             sessionEntries.push({
-                idx: i,
-                trackNum: index,
-                mp3Name, coverName,
-                hasCover: mode === 'structured' ? hasCover : false,
-                title, artist, genre,
-                duration, durationFmt: fmtDuration(duration)
+                idx:         i,
+                trackNum:    index,
+                mp3Name,
+                coverName,
+                hasCover:    mode === 'structured' ? hasCover : false,
+                title,
+                artist,
+                genre,
+                duration,
+                durationFmt: fmtDuration(duration),
             });
         }
 
-        // manifest.json only in structured mode
+        // ── manifest.json (structured mode only) ─────────────────────────────
+        //
+        //  Small plain-text file — let archiver compress it (no store: true).
+        //  Final structure mirrors the documented spec exactly:
+        //
+        //  your-album.zip
+        //  ├── songs/
+        //  │   ├── 01 - Title.mp3
+        //  │   └── 02 - Title.mp3
+        //  ├── covers/
+        //  │   ├── 01 - Title.jpg
+        //  │   └── 02 - Title.jpg
+        //  └── manifest.json
+        //
         if (mode === 'structured') {
             archive.append(
                 Buffer.from(JSON.stringify(manifest, null, 2), 'utf-8'),
@@ -234,9 +301,10 @@ async function runDownload(url, safeQ, mode, res) {
             archive.finalize();
         });
 
+        // Temp files are now safely inside the ZIP — remove them
         tempFiles.forEach(tryUnlink);
 
-        // Upsert session — one sessionId can hold both zip types
+        // Upsert session — one sessionId can hold both ZIP types
         const existing    = sessions.get(sessionId) || { albumName, entries: sessionEntries, createdAt: Date.now() };
         const sessionData = { ...existing, albumName, entries: sessionEntries, createdAt: Date.now() };
         if (mode === 'structured') sessionData.zipFile     = path.basename(zipPath);
@@ -251,10 +319,12 @@ async function runDownload(url, safeQ, mode, res) {
             fileName:   path.basename(zipPath),
             albumName,
             trackCount: manifest.length,
-            tracks:     sessionEntries
+            tracks:     sessionEntries,
         });
 
         if (!res.writableEnded) res.end();
+
+        // Auto-delete ZIP after 30 minutes
         setTimeout(() => tryUnlink(zipPath), 30 * 60_000);
 
     } catch (err) {
@@ -276,11 +346,11 @@ app.post('/preview-playlist', rateLimit, async (req, res) => {
         const info    = await ytDlp(url, { dumpSingleJson: true, flatPlaylist: true, socketTimeout: 30 });
         const entries = info.entries || [info];
         res.json({
-            title:      info.title    || 'Unknown',
-            artist:     info.uploader || 'Unknown',
+            title:      info.title     || 'Unknown',
+            artist:     info.uploader  || 'Unknown',
             thumbnail:  info.thumbnail || entries[0]?.thumbnail || '',
             isPlaylist: !!info.entries,
-            trackCount: entries.length
+            trackCount: entries.length,
         });
     } catch (err) {
         console.error('[PREVIEW]', err.message);
@@ -296,10 +366,14 @@ app.post('/formats', rateLimit, async (req, res) => {
         const info  = await ytDlp(url, { dumpSingleJson: true, noPlaylist: true, socketTimeout: 30 });
         const byAbr = (info.formats || [])
             .filter(f => f.abr && f.filesize)
-            .reduce((a, f) => { const k = Math.round(f.abr); if (!a[k]) a[k] = f; return a; }, {});
+            .reduce((a, f) => {
+                const k = Math.round(f.abr);
+                if (!a[k]) a[k] = f;
+                return a;
+            }, {});
         res.json([320, 256, 192, 128, 96].map(abr => ({
             abr,
-            size: byAbr[abr] ? (byAbr[abr].filesize / 1048576).toFixed(2) + ' MB' : 'Size varies'
+            size: byAbr[abr] ? (byAbr[abr].filesize / 1048576).toFixed(2) + ' MB' : 'Size varies',
         })));
     } catch (err) {
         console.error('[FORMATS]', err.message);
@@ -311,7 +385,7 @@ app.post('/formats', rateLimit, async (req, res) => {
 app.get('/download-progress', rateLimit, async (req, res) => {
     const { url, quality = '192' } = req.query;
     if (!isValidYouTubeUrl(url)) return res.status(400).json({ error: 'Invalid URL.' });
-    const safeQ = ['96','128','192','256','320'].includes(quality) ? quality : '192';
+    const safeQ = ['96', '128', '192', '256', '320'].includes(quality) ? quality : '192';
     res.setHeader('Content-Type',      'text/event-stream');
     res.setHeader('Cache-Control',     'no-cache');
     res.setHeader('Connection',        'keep-alive');
@@ -324,7 +398,7 @@ app.get('/download-progress', rateLimit, async (req, res) => {
 app.get('/download-flat', rateLimit, async (req, res) => {
     const { url, quality = '192' } = req.query;
     if (!isValidYouTubeUrl(url)) return res.status(400).json({ error: 'Invalid URL.' });
-    const safeQ = ['96','128','192','256','320'].includes(quality) ? quality : '192';
+    const safeQ = ['96', '128', '192', '256', '320'].includes(quality) ? quality : '192';
     res.setHeader('Content-Type',      'text/event-stream');
     res.setHeader('Cache-Control',     'no-cache');
     res.setHeader('Connection',        'keep-alive');
@@ -349,9 +423,9 @@ app.get('/song/:sessionId/:index', (req, res) => {
 
     const idx   = parseInt(req.params.index, 10);
     const entry = session.entries[idx];
-    if (!entry)  return res.status(404).json({ error: 'Track not found.' });
+    if (!entry) return res.status(404).json({ error: 'Track not found.' });
 
-    // Prefer structured zip, fall back to flat zip
+    // Prefer structured zip (songs/ prefix), fall back to flat zip
     const zipFile = session.zipFile || session.flatZipFile;
     if (!zipFile) return res.status(404).json({ error: 'No archive found.' });
 
