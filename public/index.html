@@ -1,4 +1,3 @@
-
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -78,10 +77,20 @@ input[type="url"]::placeholder { color: #bbb; }
 .btn-primary:hover:not(:disabled) { background: #333; border-color: #333; }
 .btn-primary:active:not(:disabled) { background: #111; }
 
-/* Download row — two equal download buttons */
+/* Personal — purple/indigo accent */
+.btn-personal {
+    background: #4f46e5;
+    color: #fff;
+    border-color: #4f46e5;
+    flex: 1;
+}
+.btn-personal:hover:not(:disabled) { background: #4338ca; border-color: #4338ca; }
+.btn-personal:active:not(:disabled) { background: #3730a3; }
+
+/* Download row — three equal download buttons */
 .dl-row {
     display: grid;
-    grid-template-columns: 1fr 1fr;
+    grid-template-columns: 1fr 1fr 1fr;
     gap: 8px;
     margin-bottom: 14px;
 }
@@ -96,7 +105,7 @@ input[type="url"]::placeholder { color: #bbb; }
     display: none;
     flex-shrink: 0;
 }
-.btn:not(.btn-primary) .spin { border-color: rgba(0,0,0,.15); border-top-color: #555; }
+.btn:not(.btn-primary):not(.btn-personal) .spin { border-color: rgba(0,0,0,.15); border-top-color: #555; }
 .btn.loading .spin { display: inline-block; }
 .btn.loading .lbl  { display: none; }
 
@@ -181,19 +190,8 @@ hr { border: none; border-top: 1px solid #eee; margin: 16px 0; }
     border-radius: 3px; width: 0%;
     transition: width .35s ease;
 }
+.progress-bar-fill.personal { background: #4f46e5; }
 .progress-detail { font-size: 11px; color: #aaa; }
-
-/* mode badge shown inside progress */
-.mode-badge {
-    display: inline-block;
-    font-size: 10px;
-    background: #eee;
-    border-radius: 3px;
-    padding: 1px 6px;
-    color: #777;
-    margin-left: 6px;
-    vertical-align: middle;
-}
 
 /* ── Warnings ── */
 #warningsLog {
@@ -215,7 +213,7 @@ hr { border: none; border-top: 1px solid #eee; margin: 16px 0; }
 .track-heading { font-size: 13px; font-weight: 600; color: #333; }
 
 /* ZIP download buttons in track header */
-.zip-btn-group { display: flex; gap: 6px; }
+.zip-btn-group { display: flex; gap: 6px; flex-wrap: wrap; }
 .btn-zip {
     display: inline-flex; align-items: center; gap: 5px;
     border: 1px solid #ccc; border-radius: 5px;
@@ -226,6 +224,34 @@ hr { border: none; border-top: 1px solid #eee; margin: 16px 0; }
 .btn-zip:hover { background: #f0f0f0; }
 .btn-zip.primary { background: #222; color: #fff; border-color: #222; }
 .btn-zip.primary:hover { background: #333; }
+.btn-zip.personal-style { background: #4f46e5; color: #fff; border-color: #4f46e5; }
+.btn-zip.personal-style:hover { background: #4338ca; }
+
+/* Playlist cover banner (personal mode) */
+#playlistCoverBanner {
+    display: none;
+    margin-bottom: 12px;
+    border-radius: 6px;
+    overflow: hidden;
+    position: relative;
+    max-height: 120px;
+}
+#playlistCoverBanner img {
+    width: 100%;
+    height: 120px;
+    object-fit: cover;
+    display: block;
+    border-radius: 6px;
+}
+#playlistCoverBanner .banner-label {
+    position: absolute;
+    bottom: 8px; left: 10px;
+    background: rgba(0,0,0,.55);
+    color: #fff;
+    font-size: 11px;
+    border-radius: 3px;
+    padding: 2px 7px;
+}
 
 .track-list { display: flex; flex-direction: column; gap: 1px; }
 .track-item {
@@ -267,11 +293,17 @@ hr { border: none; border-top: 1px solid #eee; margin: 16px 0; }
 #toast.err  { background: #b44; }
 #toast.ok   { background: #2a7; }
 
+/* ── Mode description pills ── */
+.dl-desc {
+    font-size: 11px; color: #aaa; margin-bottom: 14px; line-height: 1.6;
+}
+.dl-desc b { color: #888; }
+
 footer { margin-top: 24px; font-size: 11px; color: #bbb; text-align: center; }
 
 @keyframes spin { to { transform: rotate(360deg); } }
 
-@media (max-width: 520px) {
+@media (max-width: 580px) {
     .dl-row { grid-template-columns: 1fr; }
     .track-dur { display: none; }
     .zip-btn-group { width: 100%; }
@@ -325,22 +357,27 @@ footer { margin-top: 24px; font-size: 11px; color: #bbb; text-align: center; }
         <!-- Download section label -->
         <div class="section-label" style="margin-bottom:8px;">Download</div>
 
-        <!-- Two separate download buttons -->
+        <!-- Three download buttons -->
         <div class="dl-row">
             <button class="btn btn-primary" id="btnDownloadZip" onclick="handleDownload('structured')">
                 <div class="spin"></div>
-                <span class="lbl">↓ ZIP with Covers</span>
+                <span class="lbl">↓ ZIP + Covers</span>
             </button>
             <button class="btn btn-primary" id="btnDownloadFlat" onclick="handleDownload('flat')">
                 <div class="spin"></div>
-                <span class="lbl">↓ MP3 Files Only</span>
+                <span class="lbl">↓ MP3s Only</span>
+            </button>
+            <button class="btn btn-personal" id="btnDownloadPersonal" onclick="handleDownload('personal')">
+                <div class="spin"></div>
+                <span class="lbl">↓ Personal ZIP</span>
             </button>
         </div>
 
         <!-- Explanatory note -->
-        <div style="font-size:11px;color:#aaa;margin-bottom:14px;line-height:1.5;">
-            <b style="color:#888;">ZIP with Covers</b> — includes cover art, metadata &amp; manifest.json &nbsp;·&nbsp;
-            <b style="color:#888;">MP3 Files Only</b> — plain MP3s in a flat ZIP, no extras
+        <div class="dl-desc">
+            <b>ZIP + Covers</b> — songs/, covers/, manifest (array) &nbsp;·&nbsp;
+            <b>MP3s Only</b> — flat MP3s, no extras &nbsp;·&nbsp;
+            <b style="color:#4f46e5;">Personal ZIP</b> — songs/, covers/, playlist-cover.jpg &amp; manifest with name/description
         </div>
 
         <!-- Progress -->
@@ -363,14 +400,12 @@ footer { margin-top: 24px; font-size: 11px; color: #bbb; text-align: center; }
             <hr />
             <div class="track-header">
                 <span class="track-heading" id="trackHeading">Downloaded Tracks</span>
-                <div class="zip-btn-group">
-                    <button class="btn-zip" id="btnZipAlt" onclick="downloadZipAlt()" style="display:none;">
-                        ↓ Other ZIP
-                    </button>
-                    <button class="btn-zip primary" id="btnZip" onclick="downloadZip()">
-                        ↓ Download ZIP
-                    </button>
-                </div>
+                <div class="zip-btn-group" id="zipBtnGroup"></div>
+            </div>
+            <!-- Playlist cover banner (personal mode only) -->
+            <div id="playlistCoverBanner">
+                <img id="playlistCoverImg" src="" alt="Playlist cover" />
+                <span class="banner-label">Playlist Cover</span>
             </div>
             <div class="track-list" id="trackList"></div>
         </div>
@@ -387,7 +422,11 @@ footer { margin-top: 24px; font-size: 11px; color: #bbb; text-align: center; }
 let selectedQuality = '192';
 let activeEvt       = null;
 let isDownloading   = false;
-let currentSession  = null;   // { sessionId, fileName, flatFileName?, albumName, tracks[], lastMode }
+let activeMode      = null;   // which mode is currently downloading
+let currentSession  = null;   // { sessionId, fileName?, flatFileName?, personalFileName?, albumName, tracks[], lastMode }
+
+/* ── All download button IDs ── */
+const DL_BTNS = ['btnDownloadZip', 'btnDownloadFlat', 'btnDownloadPersonal'];
 
 /* ── Toast ── */
 let toastTimer = null;
@@ -414,7 +453,7 @@ function setLoading(id, on) {
 }
 
 function lockAll(lock) {
-    ['btnPreview','btnFormats','btnCount','btnDownloadZip','btnDownloadFlat'].forEach(id => {
+    ['btnPreview', 'btnFormats', 'btnCount', ...DL_BTNS].forEach(id => {
         const b = document.getElementById(id);
         if (b) b.disabled = lock;
     });
@@ -448,8 +487,7 @@ async function handleCount() {
             ? `songs in "${esc(data.title)}"`
             : `song — single video`;
         box.innerHTML = `<div class="count-box">
-            <div class="count-num">${data.trackCount}</div>
-            <div class="count-label">${label}</div>
+            <div><div class="count-num">${data.trackCount}</div><div class="count-label">${label}</div></div>
         </div>`;
         box.style.display = 'block';
     } catch (err) {
@@ -532,12 +570,13 @@ function renderQuality(formats) {
 }
 
 /* ── Download ── */
-// mode: 'structured' (ZIP with covers) | 'flat' (MP3s only)
+// mode: 'structured' | 'flat' | 'personal'
 function handleDownload(mode) {
-    // If already downloading, act as cancel
-    if (isDownloading) {
+    // If already downloading the same mode, act as cancel
+    if (isDownloading && activeMode === mode) {
         if (activeEvt) { activeEvt.close(); activeEvt = null; }
         isDownloading = false;
+        activeMode    = null;
         lockAll(false);
         resetDownloadBtnLabels();
         document.getElementById('progressSection').style.display = 'none';
@@ -548,35 +587,45 @@ function handleDownload(mode) {
     const url = getUrl(); if (!url) return;
 
     isDownloading = true;
+    activeMode    = mode;
     lockAll(true);
 
-    // Keep active button enabled as Cancel, dim the other
-    const activeBtn = mode === 'structured' ? 'btnDownloadZip' : 'btnDownloadFlat';
-    const otherBtn  = mode === 'structured' ? 'btnDownloadFlat' : 'btnDownloadZip';
-    document.getElementById(activeBtn).disabled = false;
-    document.getElementById(activeBtn).querySelector('.lbl').textContent = '✕ Cancel';
-    document.getElementById(otherBtn).disabled = true;
+    // Keep the active button enabled as Cancel, dim all others
+    const activeBtnId = mode === 'structured' ? 'btnDownloadZip'
+                      : mode === 'flat'        ? 'btnDownloadFlat'
+                      :                          'btnDownloadPersonal';
+    const activeBtn = document.getElementById(activeBtnId);
+    activeBtn.disabled = false;
+    activeBtn.querySelector('.lbl').textContent = '✕ Cancel';
 
-    const progSection  = document.getElementById('progressSection');
-    const progBar      = document.getElementById('progBar');
-    const progPct      = document.getElementById('progPct');
-    const progLabel    = document.getElementById('progLabel');
-    const progDetail   = document.getElementById('progDetail');
-    const warningsLog  = document.getElementById('warningsLog');
-    const trackSection = document.getElementById('trackSection');
+    const progBar     = document.getElementById('progBar');
+    const progPct     = document.getElementById('progPct');
+    const progLabel   = document.getElementById('progLabel');
+    const progDetail  = document.getElementById('progDetail');
+    const warningsLog = document.getElementById('warningsLog');
 
-    progSection.style.display  = 'block';
-    trackSection.style.display = 'none';
+    // Colour the progress bar for personal mode
+    progBar.className = 'progress-bar-fill' + (mode === 'personal' ? ' personal' : '');
+
+    document.getElementById('progressSection').style.display  = 'block';
+    document.getElementById('trackSection').style.display     = 'none';
+    document.getElementById('playlistCoverBanner').style.display = 'none';
     warningsLog.style.display  = 'none';
     warningsLog.innerHTML      = '';
     progBar.style.width        = '0%';
     progPct.textContent        = '0%';
-    progLabel.textContent      = mode === 'flat' ? 'Downloading MP3s…' : 'Downloading…';
+    progLabel.textContent      = mode === 'flat'     ? 'Downloading MP3s…'
+                               : mode === 'personal' ? 'Building Personal ZIP…'
+                               :                       'Downloading…';
     progDetail.textContent     = 'Starting…';
 
-    const endpoint = mode === 'flat' ? '/download-flat' : '/download-progress';
-    const evtSrc   = new EventSource(
-        `${endpoint}?url=${encodeURIComponent(url)}&quality=${encodeURIComponent(selectedQuality)}`
+    const endpointMap = {
+        structured: '/download-progress',
+        flat:       '/download-flat',
+        personal:   '/download-personal',
+    };
+    const evtSrc = new EventSource(
+        `${endpointMap[mode]}?url=${encodeURIComponent(url)}&quality=${encodeURIComponent(selectedQuality)}`
     );
     activeEvt = evtSrc;
 
@@ -606,15 +655,17 @@ function handleDownload(mode) {
             // Update or create session
             if (!currentSession || currentSession.sessionId !== d.sessionId) {
                 currentSession = {
-                    sessionId:   d.sessionId,
-                    albumName:   d.albumName,
-                    tracks:      d.tracks || [],
-                    fileName:    null,
-                    flatFileName: null
+                    sessionId:       d.sessionId,
+                    albumName:       d.albumName,
+                    tracks:          d.tracks || [],
+                    fileName:        null,
+                    flatFileName:    null,
+                    personalFileName: null,
                 };
             }
-            if (d.mode === 'structured') currentSession.fileName     = d.fileName;
-            if (d.mode === 'flat')       currentSession.flatFileName  = d.fileName;
+            if (d.mode === 'structured') currentSession.fileName         = d.fileName;
+            if (d.mode === 'flat')       currentSession.flatFileName      = d.fileName;
+            if (d.mode === 'personal')   currentSession.personalFileName  = d.fileName;
             currentSession.lastMode = d.mode;
 
             renderTrackList(currentSession, d.mode);
@@ -636,16 +687,22 @@ function handleDownload(mode) {
     };
 }
 
+const LABEL_MAP = {
+    btnDownloadZip:      '↓ ZIP + Covers',
+    btnDownloadFlat:     '↓ MP3s Only',
+    btnDownloadPersonal: '↓ Personal ZIP',
+};
 function resetDownloadBtnLabels() {
-    const z = document.getElementById('btnDownloadZip');
-    const f = document.getElementById('btnDownloadFlat');
-    if (z) z.querySelector('.lbl').textContent = '↓ ZIP with Covers';
-    if (f) f.querySelector('.lbl').textContent = '↓ MP3 Files Only';
+    for (const [id, lbl] of Object.entries(LABEL_MAP)) {
+        const b = document.getElementById(id);
+        if (b) b.querySelector('.lbl').textContent = lbl;
+    }
 }
 
 function cleanup(success) {
     if (activeEvt) { activeEvt.close(); activeEvt = null; }
     isDownloading = false;
+    activeMode    = null;
     lockAll(false);
     resetDownloadBtnLabels();
     if (!success) document.getElementById('progressSection').style.display = 'none';
@@ -653,38 +710,46 @@ function cleanup(success) {
 
 /* ── Track list ── */
 function renderTrackList(session, mode) {
-    const section = document.getElementById('trackSection');
-    const list    = document.getElementById('trackList');
-    const heading = document.getElementById('trackHeading');
-    const btnZip  = document.getElementById('btnZip');
-    const btnAlt  = document.getElementById('btnZipAlt');
+    const section  = document.getElementById('trackSection');
+    const list     = document.getElementById('trackList');
+    const heading  = document.getElementById('trackHeading');
+    const btnGroup = document.getElementById('zipBtnGroup');
+    const banner   = document.getElementById('playlistCoverBanner');
+    const bannerImg = document.getElementById('playlistCoverImg');
 
     heading.textContent = `${session.albumName} — ${session.tracks.length} track${session.tracks.length !== 1 ? 's' : ''}`;
 
-    // Primary ZIP button = the one just downloaded
-    if (mode === 'structured' && session.fileName) {
-        btnZip.textContent = '↓ Download ZIP';
-        btnZip.onclick = downloadZip;
-        btnZip.style.display = '';
-    } else if (mode === 'flat' && session.flatFileName) {
-        btnZip.textContent = '↓ Download MP3s ZIP';
-        btnZip.onclick = downloadFlatZip;
-        btnZip.style.display = '';
+    // ── Build ZIP button group ────────────────────────────────────────────────
+    btnGroup.innerHTML = '';
+
+    const btnDefs = [
+        { key: 'fileName',        label: '↓ ZIP',          cls: 'primary',        fn: 'downloadZip' },
+        { key: 'flatFileName',     label: '↓ MP3s ZIP',     cls: '',               fn: 'downloadFlatZip' },
+        { key: 'personalFileName', label: '↓ Personal ZIP', cls: 'personal-style', fn: 'downloadPersonalZip' },
+    ];
+
+    for (const def of btnDefs) {
+        if (!session[def.key]) continue;
+        const b = document.createElement('button');
+        b.className = `btn-zip ${def.cls}`.trim();
+        b.textContent = def.label;
+        b.onclick = window[def.fn];
+        btnGroup.appendChild(b);
     }
 
-    // Alt button: show the OTHER type if it also exists
-    btnAlt.style.display = 'none';
-    if (session.fileName && session.flatFileName) {
-        if (mode === 'structured') {
-            btnAlt.textContent = '↓ MP3s ZIP';
-            btnAlt.onclick = downloadFlatZip;
-        } else {
-            btnAlt.textContent = '↓ Full ZIP';
-            btnAlt.onclick = downloadZip;
-        }
-        btnAlt.style.display = '';
+    // ── Playlist cover banner (personal mode) ─────────────────────────────────
+    if (mode === 'personal' && session.personalFileName) {
+        const coverUrl = `/playlist-cover/${encodeURIComponent(session.sessionId)}`;
+        bannerImg.src = coverUrl;
+        bannerImg.onerror = () => { banner.style.display = 'none'; };
+        bannerImg.onload  = () => { banner.style.display = 'block'; };
+        // Trigger load check in case it already errored
+        banner.style.display = 'none';
+    } else {
+        banner.style.display = 'none';
     }
 
+    // ── Track rows ────────────────────────────────────────────────────────────
     list.innerHTML = '';
     session.tracks.forEach((t, i) => {
         const row = document.createElement('div');
@@ -722,24 +787,32 @@ function downloadSong(trackIndex) {
     toast(`Downloading: ${t.title}`);
 }
 
-/* ── Full ZIP download (structured) ── */
+/* ── ZIP downloads ── */
 function downloadZip() {
     if (!currentSession || !currentSession.fileName) return;
-    const a = document.createElement('a');
-    a.href     = `/file/${encodeURIComponent(currentSession.fileName)}`;
-    a.download = currentSession.fileName;
-    document.body.appendChild(a); a.click(); document.body.removeChild(a);
+    triggerDownload(`/file/${encodeURIComponent(currentSession.fileName)}`, currentSession.fileName);
     toast('Downloading ZIP…');
 }
 
-/* ── Flat ZIP download (MP3s only) ── */
 function downloadFlatZip() {
     if (!currentSession || !currentSession.flatFileName) return;
-    const a = document.createElement('a');
-    a.href     = `/file/${encodeURIComponent(currentSession.flatFileName)}`;
-    a.download = currentSession.flatFileName;
-    document.body.appendChild(a); a.click(); document.body.removeChild(a);
+    triggerDownload(`/file/${encodeURIComponent(currentSession.flatFileName)}`, currentSession.flatFileName);
     toast('Downloading MP3s ZIP…');
+}
+
+function downloadPersonalZip() {
+    if (!currentSession || !currentSession.personalFileName) return;
+    triggerDownload(`/file/${encodeURIComponent(currentSession.personalFileName)}`, currentSession.personalFileName);
+    toast('Downloading Personal ZIP…');
+}
+
+function triggerDownload(href, filename) {
+    const a = document.createElement('a');
+    a.href     = href;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
 }
 
 /* ── Enter key → preview ── */
