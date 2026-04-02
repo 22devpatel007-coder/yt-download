@@ -14,6 +14,18 @@ A powerful Node.js local web application for downloading YouTube videos and play
 - **Metadata & Album Art Embedding**: Automatically injects tags and thumbnails directly into the downloaded MP3 files using `ffmpeg`.
 - **Session Management & Auto-Cleanup**: Automatically cleans up generated `.zip` files and temporary files.
 
+## Project Architecture
+
+The application handles its complex operations via cleanly separated, domain-driven modules:
+- **`config/`**: Serves as the single source of truth for variables such as `PORT`, `CONCURRENCY`, and paths to `ffmpeg`.
+- **`downloader/`**: The core data extraction engine handling independent domain logic (fetching tracks, extracting covers, parallel worker queues, manifest builders).
+- **`engine/`**: The centralized orchestrator (`runDownload.js`) controlling the flow between downloading arrays, archiving files, and emitting events.
+- **`middleware/`**: Shared route protection (CORS handling, Memory-based Rate Limiter).
+- **`routes/`**: Distinct Express setups for Previewing, Finding Formats, Streaming ZIP packages, and Serving local files.
+- **`sessions/`**: Singleton in-memory map storing tracking metrics mapped against interval-based cleanup sweeps.
+- **`utils/`**: Shared helper properties (URL parsing, safe name serialization, duration formatting, ffmpeg executions).
+- **`server.js`**: The minimal entry point linking environment context, middlewares, routes, and booting the listening server.
+
 ## Prerequisites
 
 Before running the application, make sure you have:
@@ -39,6 +51,7 @@ Before running the application, make sure you have:
    Open `.env` and configure your settings:
    - `PORT`: Define the port for the web server (default: 3030).
    - `FFMPEG_PATH`: The path to your FFmpeg executable. If FFmpeg is already in your system's PATH, you can set this to `ffmpeg`.
+   - `CONCURRENCY`: Define how many parallel track downloads execute simultaneously (default: 3).
 
 ## Running the Server
 
@@ -74,4 +87,3 @@ Open your browser and navigate to this URL to use the web interface.
 - **[Archiver](https://github.com/archiverjs/node-archiver)**: For compressing multiple downloaded songs into a `.zip` file on the fly.
 - **[adm-zip](https://github.com/cthackers/adm-zip)**: Serves individual files dynamically from completed ZIP archives.
 - **FFmpeg**: For format conversion, cover art embedding, and audio extraction.
-

@@ -19,7 +19,6 @@ async function fetchPlaylistCover(url, tempFiles) {
             convertThumbnails: 'jpg',
             output:            rawBase,
             ffmpegLocation:    FFMPEG_PATH,
-            noPlaylist:        false,
             socketTimeout:     30,
         });
         const baseFile = path.basename(rawBase);
