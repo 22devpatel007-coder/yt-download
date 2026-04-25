@@ -171,7 +171,8 @@
 
                 if (mode !== 'flat') {
                     manifest.push({
-                        file:     r.mp3Name,
+    file:     `songs/${r.mp3Name}`,
+                        cover:    `covers/${r.coverName}`,   // ← add this
                         title:    r.title,
                         artist:   r.artist,
                         genre:    r.genre,
