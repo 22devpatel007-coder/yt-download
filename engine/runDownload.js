@@ -1,15 +1,15 @@
 const ytDlp = require('yt-dlp-exec');
-const path = require('path');
-const fs = require('fs');
+const path  = require('path');
+const fs    = require('fs');
 
 const { CONCURRENCY, downloadDir } = require('../config');
-const sessions = require('../sessions/store');
-const { safeName, tryUnlink, getEntryUrl, fmtDuration } = require('../utils/fileHelper');
-const { downloadTrack } = require('../downloader/trackDownloader');
+const sessions  = require('../sessions/store');
+const { safeName, tryUnlink, getEntryUrl, fmtDuration, fetchGenre } = require('../utils/fileHelper');
+const { downloadTrack }      = require('../downloader/trackDownloader');
 const { fetchPlaylistCover } = require('../downloader/playlistCover');
-const { setupArchive } = require('../downloader/archiveBuilder');
-const { buildManifest } = require('../downloader/manifestBuilder');
-const { runWorkerPool } = require('../downloader/workerPool');
+const { setupArchive }       = require('../downloader/archiveBuilder');
+const { buildManifest }      = require('../downloader/manifestBuilder');
+const { runWorkerPool }      = require('../downloader/workerPool');
 
 async function runDownload(url, safeQ, mode, res) {
     const send = d => {
@@ -50,26 +50,51 @@ async function runDownload(url, safeQ, mode, res) {
             const entryUrl = getEntryUrl(v, url);
             if (!entryUrl) { console.warn(`[SKIP] Entry ${i + 1}: no URL`); return; }
 
-            const index    = String(i + 1).padStart(2, '0');
-            const title    = safeName(v.title || `Track ${index}`);
-            const artist   = v.uploader || v.channel || 'Unknown Artist';
-            const genre    = v.genre    || 'Unknown';
-            const duration = Math.round(v.duration || 0);
-            const stem     = `${index} - ${title}`;
-            const mp3Name  = `${stem}.mp3`;
+            const index  = String(i + 1).padStart(2, '0');
+            const title  = safeName(v.title   || `Track ${index}`);
+            const artist = v.uploader || v.channel || 'Unknown Artist';
+
+            // ── Genre: use YouTube value if real, else fetch from MusicBrainz ──
+            //
+            //  YouTube rarely provides genre. fetchGenre() queries MusicBrainz
+            //  by title + artist and returns the top community tag.
+            //  Falls back to 'Unknown' if MusicBrainz has nothing.
+            //  5 s timeout so it never delays the download noticeably.
+            //
+            let genre = v.genre && v.genre.trim() && v.genre.trim().toLowerCase() !== 'unknown'
+                ? v.genre.trim()
+                : await fetchGenre(title, artist);
+
+            const duration  = Math.round(v.duration || 0);
+
+            // ── Filename: "Song Name - Artist Name.mp3" ───────────────────────
+            //
+            //  Original used "01 - Song Title.mp3"
+            //  New format:   "Song Name - Artist Name.mp3"
+            //  safeName() strips illegal filesystem characters from both parts.
+            //
+            const mp3Name   = `${safeName(title)} - ${safeName(artist)}.mp3`;
+
+            // coverName still uses index-stem so covers/ folder stays organised
+            const stem      = `${index} - ${title}`;
             const coverName = `${stem}.jpg`;
 
-            const ts       = Date.now();
-            const uid      = Math.random().toString(36).slice(2, 6);
-            const songPath = path.join(downloadDir, `tmp-${ts}-${uid}.mp3`);
+            const ts        = Date.now();
+            const uid       = Math.random().toString(36).slice(2, 6);
+            const songPath  = path.join(downloadDir, `tmp-${ts}-${uid}.mp3`);
             const coverPath = path.join(downloadDir, `tmp-${ts}-${uid}-cover.jpg`);
             tempFiles.push(songPath, coverPath);
 
-            console.log(`⬇️  [${i + 1}/${entries.length}] ${title} (${mode})`);
+            console.log(`⬇️  [${i + 1}/${entries.length}] ${title} — ${artist} [${genre}] (${mode})`);
 
             let hasCover = false;
             try {
-                const result = await downloadTrack(entryUrl, songPath, coverPath, safeQ, needsCover, title);
+                // Pass title, artist, genre to downloadTrack so it can draw them
+                // on the generated black cover image
+                const result = await downloadTrack(
+                    entryUrl, songPath, coverPath, safeQ, needsCover,
+                    title, artist, genre   // ← new params vs original
+                );
                 hasCover = result.hasCover;
             } catch (err) {
                 console.error(`[TRACK FAIL] ${title}:`, err.message);
@@ -77,7 +102,7 @@ async function runDownload(url, safeQ, mode, res) {
                 return;
             }
 
-            // Serialise archive writes
+            // ── Serialise archive writes ───────────────────────────────────────
             await addToArchive(async () => {
                 if (fs.existsSync(songPath)) {
                     archive.file(songPath, { name: mode === 'flat' ? mp3Name : `songs/${mp3Name}`, store: true });
@@ -106,7 +131,7 @@ async function runDownload(url, safeQ, mode, res) {
             });
         };
 
-        // ── Parallel pool: CONCURRENCY tracks at a time ───────────────────────
+        // ── Parallel pool ─────────────────────────────────────────────────────
         await runWorkerPool(entries, CONCURRENCY, res, processEntry);
 
         // ── manifest.json ─────────────────────────────────────────────────────
