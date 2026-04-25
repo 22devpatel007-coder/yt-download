@@ -25,30 +25,19 @@ async function resizeCover(inputPath, outputPath) {
 //    - Replace them with a safe substitute before passing to ffmpeg
 //
 async function generateBlackCover(title, artist, genre, outputPath) {
-    // Escape text for ffmpeg drawtext: ' and \ cause parse errors
     const esc = str => String(str || '')
         .replace(/\\/g, '/')
-        .replace(/'/g, '\u2019')   // replace ' with right single quotation mark
+        .replace(/'/g, '\u2019')
         .replace(/:/g, '\\:')
         .replace(/\[/g, '\\[')
         .replace(/\]/g, '\\]')
-        .slice(0, 50);             // cap length so text fits on 500px canvas
+        .slice(0, 50);
 
     const t = esc(title);
     const a = esc(artist);
     const g = esc(genre);
 
-    // ── Try drawtext (with font) ──────────────────────────────────────────────
-    //
-    //  Font search order (covers Windows, macOS, Linux):
-    //    Windows : C:/Windows/Fonts/arial.ttf
-    //    macOS   : /Library/Fonts/Arial.ttf  or  /System/Library/Fonts/Helvetica.ttc
-    //    Linux   : /usr/share/fonts/truetype/dejavu/DejaVuSans.ttf
-    //
-    //  We try each path; use the first one that exists.
-    //  If none exist → skip drawtext, go to fallback.
-    //
-    const fs   = require('fs');
+    const fs    = require('fs');
     const fonts = [
         'C:/Windows/Fonts/arial.ttf',
         'C:/Windows/Fonts/Arial.ttf',
@@ -58,21 +47,21 @@ async function generateBlackCover(title, artist, genre, outputPath) {
         '/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf',
         '/usr/share/fonts/dejavu/DejaVuSans.ttf',
     ];
+
     const fontFile = fonts.find(f => fs.existsSync(f));
 
-    if (fontFile) {
+    // Escape Windows drive letter colon for ffmpeg filter parser
+    // e.g. C:/Windows/... → C\:/Windows/...
+    const escapedFont = fontFile
+        ? fontFile.replace(/^([A-Za-z]):/, '$1\\:')
+        : null;
+
+    if (escapedFont) {
         try {
-            //  Layout (all positions on 500×500 canvas):
-            //    Song title  → y=160  (large, white)
-            //    Artist name → y=240  (medium, white)
-            //    Genre       → y=305  (small, gray  #aaaaaa)
-            //
-            //  x=(w-text_w)/2  centers text horizontally regardless of length.
-            //
             const drawtext = [
-                `drawtext=fontfile='${fontFile}':text='${t}':fontcolor=white:fontsize=34:x=(w-text_w)/2:y=160`,
-                `drawtext=fontfile='${fontFile}':text='${a}':fontcolor=white:fontsize=24:x=(w-text_w)/2:y=240`,
-                `drawtext=fontfile='${fontFile}':text='${g}':fontcolor=#aaaaaa:fontsize=18:x=(w-text_w)/2:y=305`,
+                `drawtext=fontfile='${escapedFont}':text='${t}':fontcolor=white:fontsize=34:x=(w-text_w)/2:y=160`,
+                `drawtext=fontfile='${escapedFont}':text='${a}':fontcolor=white:fontsize=24:x=(w-text_w)/2:y=240`,
+                `drawtext=fontfile='${escapedFont}':text='${g}':fontcolor=#aaaaaa:fontsize=18:x=(w-text_w)/2:y=305`,
             ].join(',');
 
             await execFileAsync(FFMPEG_PATH, [
@@ -90,11 +79,7 @@ async function generateBlackCover(title, artist, genre, outputPath) {
         }
     }
 
-    // ── Fallback: plain solid black JPEG (no text) ────────────────────────────
-    //
-    //  -f lavfi -i color=c=black generates a solid black frame.
-    //  Still a valid cover image — just no text overlay.
-    //
+    // Fallback: plain solid black JPEG (no text)
     await execFileAsync(FFMPEG_PATH, [
         '-y',
         '-f', 'lavfi',
