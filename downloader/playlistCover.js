@@ -22,8 +22,8 @@ async function fetchPlaylistCover(url, tempFiles) {
             socketTimeout:     30,
         });
         const baseFile = path.basename(rawBase);
-        const found    = fs.readdirSync(downloadDir)
-            .find(f => f.startsWith(baseFile) && /\.(jpg|jpeg|png|webp)$/i.test(f));
+        const found = fs.readdirSync(downloadDir)
+    .find(f => !before.has(f) && /\.(jpg|jpeg|png|webp)$/i.test(f));
         if (found) {
             const src = path.join(downloadDir, found);
             if (src !== rawDest) fs.renameSync(src, rawDest);

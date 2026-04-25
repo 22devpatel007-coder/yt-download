@@ -2,8 +2,28 @@ const fs = require('fs');
 
 function buildManifest(archive, mode, manifest, albumName, info, playlistCoverPath) {
     if (mode === 'structured') {
+        const structuredManifest = manifest.map(entry => ({
+            file:     entry.file,
+            cover:    entry.cover,
+            title:    entry.title,
+            artist:   entry.artist,
+            genre:    entry.genre,
+            duration: entry.duration,
+        }));
         archive.append(
-            Buffer.from(JSON.stringify(manifest, null, 2), 'utf-8'),
+            Buffer.from(JSON.stringify(structuredManifest, null, 2), 'utf-8'),
+            { name: 'manifest.json' }
+        );
+    } else if (mode === 'flat') {
+        const flatManifest = manifest.map(entry => ({
+            file:     entry.file.replace('songs/', ''),
+            title:    entry.title,
+            artist:   entry.artist,
+            genre:    entry.genre,
+            duration: entry.duration,
+        }));
+        archive.append(
+            Buffer.from(JSON.stringify(flatManifest, null, 2), 'utf-8'),
             { name: 'manifest.json' }
         );
     } else if (mode === 'personal') {
@@ -11,7 +31,14 @@ function buildManifest(archive, mode, manifest, albumName, info, playlistCoverPa
             name:        albumName,
             description: info.description ? info.description.slice(0, 500) : '',
             ...(playlistCoverPath ? { cover: 'playlist-cover.jpg' } : {}),
-            songs: manifest,
+            songs: manifest.map(entry => ({
+                file:     entry.file,
+                cover:    entry.cover,
+                title:    entry.title,
+                artist:   entry.artist,
+                genre:    entry.genre,
+                duration: entry.duration,
+            })),
         };
         archive.append(
             Buffer.from(JSON.stringify(personalManifest, null, 2), 'utf-8'),
