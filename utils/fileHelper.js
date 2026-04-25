@@ -1,5 +1,5 @@
 const fs   = require('fs');
-const http  = require('https'); // built-in Node.js — no install needed
+const http = require('https');
 
 function safeName(str) {
     return (str || 'unknown').replace(/[<>:"/\\|?*\x00-\x1f]+/g, '').trim().slice(0, 180) || 'unknown';
@@ -19,58 +19,72 @@ function fmtDuration(sec) {
     return `${m}:${String(s % 60).padStart(2, '0')}`;
 }
 
-// ─── Fetch real genre from MusicBrainz API ─────────────────────────────────────
+// ─── Known genre keywords to match against yt-dlp tags ────────────────────────
+const GENRE_KEYWORDS = [
+    'pop','rock','hip hop','rap','r&b','rnb','soul','jazz','blues','classical',
+    'electronic','edm','house','techno','dance','indie','alternative','metal',
+    'punk','folk','country','reggae','latin','k-pop','bollywood','punjabi',
+    'lofi','lo-fi','trap','drill','phonk','ambient','acoustic','gospel',
+    'funk','disco','swing','opera','orchestra','synthwave','retrowave',
+];
+
+// ─── Extract genre from yt-dlp entry metadata ─────────────────────────────────
 //
-//  Flow:
-//    1. Search MusicBrainz recordings by title + artist
-//    2. Look at the top result's tags (sorted by count desc)
-//    3. Return the highest-voted tag as genre string
-//    4. If nothing found → return 'Unknown'
+//  Priority:
+//    1. entry.genre          — set by some uploaders in video metadata
+//    2. entry.categories     — YouTube category e.g. ["Music"]  (too broad, skip "Music" alone)
+//    3. entry.tags           — match against known genre keywords
+//    4. entry.description    — last resort keyword scan
+//    5. 'Unknown'
 //
-//  MusicBrainz requires a descriptive User-Agent (their policy).
-//  We use a 5 second timeout so a slow API never blocks the download.
-//
-function fetchGenre(title, artist) {
-    return new Promise(resolve => {
-        // Sanitise query — strip characters MusicBrainz Lucene dislikes
-        const clean = s => String(s || '').replace(/[+\-&|!(){}[\]^"~*?:\\/]/g, ' ').trim();
-        const query = encodeURIComponent(`recording:"${clean(title)}" AND artist:"${clean(artist)}"`);
-        const url   = `https://musicbrainz.org/ws/2/recording?query=${query}&limit=1&fmt=json`;
+function extractGenre(entry) {
+    // 1. explicit genre field
+    if (entry.genre && entry.genre.trim() && entry.genre.trim().toLowerCase() !== 'unknown') {
+        return capitalize(entry.genre.trim());
+    }
 
-        const req = http.get(url, {
-            headers: {
-                'User-Agent': 'YT-MP3-Downloader/1.0 (local-use)',
-                'Accept':     'application/json',
-            },
-            timeout: 5000,
-        }, res => {
-            let raw = '';
-            res.on('data', chunk => { raw += chunk; });
-            res.on('end', () => {
-                try {
-                    const data       = JSON.parse(raw);
-                    const recordings = data.recordings || [];
-                    if (!recordings.length) return resolve('Unknown');
+    // 2. categories — skip generic "Music", use specific ones like "Pop Music"
+    const cats = entry.categories || [];
+    for (const cat of cats) {
+        const c = (cat || '').toLowerCase().trim();
+        if (c && c !== 'music' && c !== 'entertainment') {
+            return capitalize(cat.trim());
+        }
+    }
 
-                    // Tags are on the recording itself
-                    const tags = (recordings[0].tags || [])
-                        .sort((a, b) => (b.count || 0) - (a.count || 0));
+    // 3. tags — scan for known genre keywords
+    const tags = entry.tags || [];
+    for (const tag of tags) {
+        const t = (tag || '').toLowerCase().trim();
+        for (const kw of GENRE_KEYWORDS) {
+            if (t === kw || t.includes(kw)) {
+                return capitalize(tag.trim());
+            }
+        }
+    }
 
-                    if (tags.length) {
-                        // Capitalise first letter of genre
-                        const genre = tags[0].name.charAt(0).toUpperCase() + tags[0].name.slice(1);
-                        return resolve(genre);
-                    }
-                    resolve('Unknown');
-                } catch {
-                    resolve('Unknown');
-                }
-            });
-        });
+    // 4. description keyword scan (last resort)
+    const desc = (entry.description || '').toLowerCase();
+    for (const kw of GENRE_KEYWORDS) {
+        if (desc.includes(kw)) {
+            return capitalize(kw);
+        }
+    }
 
-        req.on('error',   () => resolve('Unknown'));
-        req.on('timeout', () => { req.destroy(); resolve('Unknown'); });
-    });
+    return 'Unknown';
 }
 
-module.exports = { safeName, tryUnlink, getEntryUrl, fmtDuration, fetchGenre };
+function capitalize(str) {
+    return str ? str.charAt(0).toUpperCase() + str.slice(1) : '';
+}
+
+// ─── fetchGenre — kept for API compatibility with runDownload.js ───────────────
+//  Now uses yt-dlp entry data instead of external API calls.
+//  Pass the full yt-dlp entry object as third argument.
+//
+function fetchGenre(title, artist, entry) {
+    if (entry) return Promise.resolve(extractGenre(entry));
+    return Promise.resolve('Unknown');
+}
+
+module.exports = { safeName, tryUnlink, getEntryUrl, fmtDuration, fetchGenre, extractGenre };
