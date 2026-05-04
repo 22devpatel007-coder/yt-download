@@ -12,28 +12,15 @@ const { buildManifest }      = require('../downloader/manifestBuilder');
 const { runWorkerPool }      = require('../downloader/workerPool');
 
 // ─── Clean YouTube title → extract real song title + artist ───────────────────
-//
-//  YouTube titles follow patterns like:
-//    "Arijit Singh - Aaj Se Teri (Lyrics Video) | Padman | Akshay Kumar"
-//    "AP Dhillon - Lover (Official Video)"
-//    "back to friends (official audio)"  ← no artist prefix
-//
-//  Strategy:
-//    1. Strip everything after  |  (extra movie/actor junk)
-//    2. Strip common suffixes: (Lyrics Video), (Official Audio), etc.
-//    3. If title contains " - ", split → artist + song
-//    4. Otherwise use channel/uploader as artist
-//
 function parseTitle(rawTitle, uploaderName) {
     let t = rawTitle
         .replace(/\s*\|.*$/i, '')
         .replace(/\s*\/\/.*$/i, '')
         .trim();
 
-    // Strip common suffixes BEFORE splitting
     t = t
         .replace(/\(?\s*(official\s*)?(lyrics?\s*)?(video|audio|music video|mv|hd|4k|visualizer|lyric video|audio video)\s*\)?/gi, '')
-        .replace(/\(?\s*lyrics?\s*\)?/gi, '')        // ← strip (Lyrics) / Lyrics
+        .replace(/\(?\s*lyrics?\s*\)?/gi, '')
         .replace(/\(?\s*ft\.?[^)]*\)?\s*$/gi, '')
         .replace(/\[\s*[^\]]*\]/gi, '')
         .replace(/\s{2,}/g, ' ')
@@ -45,33 +32,40 @@ function parseTitle(rawTitle, uploaderName) {
         const right = parts.slice(1).join(' - ').trim();
 
         if (left && right) {
-            // ── Detect order: artist names are usually shorter than song titles ─
-            // Also check uploader for hints
             const uploaderLower = uploaderName.toLowerCase();
             const leftLower     = left.toLowerCase();
             const rightLower    = right.toLowerCase();
 
-            // If uploader contains left side → left is channel repost, right is song
-            // If right matches uploader → Song - Artist format
             if (rightLower.includes(uploaderLower) || uploaderLower.includes(rightLower)) {
                 return { title: left, artist: right };
             }
-            // If left matches uploader → Artist - Song format (uploader is artist)
             if (leftLower.includes(uploaderLower) || uploaderLower.includes(leftLower)) {
                 return { title: right, artist: left };
             }
-
-            // Neither matches uploader →
-            // Shorter side is likely the artist name
             if (left.split(' ').length <= right.split(' ').length) {
-                return { title: right, artist: left };  // left shorter = artist
+                return { title: right, artist: left };
             } else {
-                return { title: left, artist: right };  // right shorter = artist
+                return { title: left, artist: right };
             }
         }
     }
 
     return { title: t || rawTitle, artist: uploaderName };
+}
+
+// ─── Fetch full yt-dlp metadata for a single entry ────────────────────────────
+//  Flat playlist entries are stubs — no tags/genre/categories.
+//  This fetches the real page metadata for one video URL.
+async function fetchFullMeta(entryUrl) {
+    try {
+        return await ytDlp(entryUrl, {
+            dumpSingleJson: true,
+            noPlaylist:     true,
+            socketTimeout:  30,
+        });
+    } catch {
+        return null;
+    }
 }
 
 async function runDownload(url, safeQ, mode, res) {
@@ -105,25 +99,19 @@ async function runDownload(url, safeQ, mode, res) {
 
         send({ status: 'fetching', message: 'Looking up track metadata…' });
 
-        const trackMeta = await Promise.all(entries.map(async (v, i) => {
+        // ── Build basic track meta from flat entries ───────────────────────────
+        const trackMeta = entries.map((v, i) => {
             const index       = String(i + 1).padStart(2, '0');
-            // New (auto-detect):
             const rawUploader = v.uploader || v.channel || 'Unknown Artist';
             const { title: parsedTitle, artist: parsedArtist } = parseTitle(v.title || `Track ${index}`, rawUploader);
-            const title  = safeName(v.track   || parsedTitle);
-            const artist = safeName(v.artist  || v.creator || parsedArtist) ;
-
-            // ── Genre from yt-dlp metadata (no external API) ──────────────────
-            const genre = await fetchGenre(title, artist, v);
-
-            const duration  = Math.round(v.duration || 0);
+            const title  = safeName(v.track  || parsedTitle);
+            const artist = safeName(v.artist || v.creator || parsedArtist);
             const mp3Name   = `${title} - ${artist}.mp3`;
             const stem      = `${index} - ${title}`;
             const coverName = `${stem}.jpg`;
             const entryUrl  = getEntryUrl(v, url);
-
-            return { i, index, title, artist, genre, duration, mp3Name, coverName, entryUrl };
-        }));
+            return { i, index, title, artist, mp3Name, coverName, entryUrl, flatEntry: v };
+        });
 
         const downloadResults = new Array(entries.length).fill(null);
         let completedCount    = 0;
@@ -138,7 +126,16 @@ async function runDownload(url, safeQ, mode, res) {
                 return;
             }
 
-            const { index, title, artist, genre, duration, mp3Name, coverName } = meta;
+            const { index, title, artist, mp3Name, coverName } = meta;
+
+            // ── Fetch full metadata for this track to get genre ────────────────
+            //    This is the key fix: flat entries have no tags/genre/categories.
+            //    We fetch the full video page for each track individually.
+            const fullMeta = await fetchFullMeta(meta.entryUrl);
+            const richEntry = fullMeta || meta.flatEntry;
+
+            const duration = Math.round(richEntry.duration || meta.flatEntry.duration || 0);
+            const genre    = await fetchGenre(title, artist, richEntry);
 
             const ts        = Date.now();
             const uid       = Math.random().toString(36).slice(2, 6);

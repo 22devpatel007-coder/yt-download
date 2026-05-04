@@ -12,7 +12,11 @@ async function fetchPlaylistCover(url, tempFiles) {
     const rawDest = path.join(downloadDir, `tmp-plraw-${ts}-${uid}.jpg`);
     const resized = path.join(downloadDir, `tmp-plcover-${ts}-${uid}.jpg`);
     tempFiles.push(rawDest, resized);
+
     try {
+        // Snapshot directory BEFORE download so we can detect the new file
+        const before = new Set(fs.readdirSync(downloadDir));
+
         await ytDlp(url, {
             skipDownload:      true,
             writeThumbnail:    true,
@@ -21,9 +25,10 @@ async function fetchPlaylistCover(url, tempFiles) {
             ffmpegLocation:    FFMPEG_PATH,
             socketTimeout:     30,
         });
-        const baseFile = path.basename(rawBase);
+
         const found = fs.readdirSync(downloadDir)
-    .find(f => !before.has(f) && /\.(jpg|jpeg|png|webp)$/i.test(f));
+            .find(f => !before.has(f) && /\.(jpg|jpeg|png|webp)$/i.test(f));
+
         if (found) {
             const src = path.join(downloadDir, found);
             if (src !== rawDest) fs.renameSync(src, rawDest);
@@ -33,6 +38,7 @@ async function fetchPlaylistCover(url, tempFiles) {
     } catch (e) {
         console.log(`⚠️  Playlist cover skipped — ${e.message}`);
     }
+
     return playlistCoverPath;
 }
 
