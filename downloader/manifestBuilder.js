@@ -5,7 +5,7 @@ function buildManifest(archive, mode, manifest, albumName, info, playlistCoverPa
         file:    entry.file,
         title:   entry.title,
         artist:  entry.artist,
-        ...(entry.tags?.length ? { tags: entry.tags }         : {}),
+        tags: [],
         ...(entry.duration     ? { duration: entry.duration } : {}),
         ...(includeCovers && entry.cover ? { cover: entry.cover } : {}),
     });

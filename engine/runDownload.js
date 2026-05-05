@@ -210,7 +210,6 @@ async function runDownload(url, safeQ, mode, res) {
                 artist: r.artist,
                 genre: r.genre,
                 duration: r.duration,
-                tags: entries[r.i]?.tags || [],
             });
 
             sessionEntries.push({
