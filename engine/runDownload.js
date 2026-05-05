@@ -1,15 +1,15 @@
 const ytDlp = require('yt-dlp-exec');
-const path  = require('path');
-const fs    = require('fs');
+const path = require('path');
+const fs = require('fs');
 
 const { CONCURRENCY, downloadDir } = require('../config');
-const sessions  = require('../sessions/store');
+const sessions = require('../sessions/store');
 const { safeName, tryUnlink, getEntryUrl, fmtDuration, fetchGenre } = require('../utils/fileHelper');
-const { downloadTrack }      = require('../downloader/trackDownloader');
+const { downloadTrack } = require('../downloader/trackDownloader');
 const { fetchPlaylistCover } = require('../downloader/playlistCover');
-const { setupArchive }       = require('../downloader/archiveBuilder');
-const { buildManifest }      = require('../downloader/manifestBuilder');
-const { runWorkerPool }      = require('../downloader/workerPool');
+const { setupArchive } = require('../downloader/archiveBuilder');
+const { buildManifest } = require('../downloader/manifestBuilder');
+const { runWorkerPool } = require('../downloader/workerPool');
 
 // ─── Clean YouTube title → extract real song title + artist ───────────────────
 function parseTitle(rawTitle, uploaderName) {
@@ -28,13 +28,13 @@ function parseTitle(rawTitle, uploaderName) {
 
     if (t.includes(' - ')) {
         const parts = t.split(/\s+-\s+/);
-        const left  = parts[0].trim();
+        const left = parts[0].trim();
         const right = parts.slice(1).join(' - ').trim();
 
         if (left && right) {
             const uploaderLower = uploaderName.toLowerCase();
-            const leftLower     = left.toLowerCase();
-            const rightLower    = right.toLowerCase();
+            const leftLower = left.toLowerCase();
+            const rightLower = right.toLowerCase();
 
             if (rightLower.includes(uploaderLower) || uploaderLower.includes(rightLower)) {
                 return { title: left, artist: right };
@@ -60,8 +60,8 @@ async function fetchFullMeta(entryUrl) {
     try {
         return await ytDlp(entryUrl, {
             dumpSingleJson: true,
-            noPlaylist:     true,
-            socketTimeout:  30,
+            noPlaylist: true,
+            socketTimeout: 30,
         });
     } catch {
         return null;
@@ -70,7 +70,7 @@ async function fetchFullMeta(entryUrl) {
 
 async function runDownload(url, safeQ, mode, res) {
     const send = d => {
-        try { if (!res.writableEnded) res.write(`data: ${JSON.stringify(d)}\n\n`); } catch {}
+        try { if (!res.writableEnded) res.write(`data: ${JSON.stringify(d)}\n\n`); } catch { }
     };
 
     const tempFiles = [];
@@ -79,8 +79,8 @@ async function runDownload(url, safeQ, mode, res) {
     try {
         send({ status: 'fetching', message: 'Fetching playlist info…' });
 
-        const info      = await ytDlp(url, { dumpSingleJson: true, flatPlaylist: true, socketTimeout: 30 });
-        const entries   = info.entries || [info];
+        const info = await ytDlp(url, { dumpSingleJson: true, flatPlaylist: true, socketTimeout: 30 });
+        const entries = info.entries || [info];
         const albumName = safeName(info.title || 'download');
         const sessionId = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 
@@ -101,20 +101,20 @@ async function runDownload(url, safeQ, mode, res) {
 
         // ── Build basic track meta from flat entries ───────────────────────────
         const trackMeta = entries.map((v, i) => {
-            const index       = String(i + 1).padStart(2, '0');
+            const index = String(i + 1).padStart(2, '0');
             const rawUploader = v.uploader || v.channel || 'Unknown Artist';
             const { title: parsedTitle, artist: parsedArtist } = parseTitle(v.title || `Track ${index}`, rawUploader);
-            const title  = safeName(v.track  || parsedTitle);
+            const title = safeName(v.track || parsedTitle);
             const artist = safeName(v.artist || v.creator || parsedArtist);
-            const mp3Name   = `${title} - ${artist}.mp3`;
-            const stem      = `${index} - ${title}`;
+            const mp3Name = `${title} - ${artist}.mp3`;
+            const stem = `${index} - ${title}`;
             const coverName = `${stem}.jpg`;
-            const entryUrl  = getEntryUrl(v, url);
+            const entryUrl = getEntryUrl(v, url);
             return { i, index, title, artist, mp3Name, coverName, entryUrl, flatEntry: v };
         });
 
         const downloadResults = new Array(entries.length).fill(null);
-        let completedCount    = 0;
+        let completedCount = 0;
 
         const processEntry = async (v, i) => {
             if (res.destroyed || res.writableEnded) return;
@@ -135,11 +135,11 @@ async function runDownload(url, safeQ, mode, res) {
             const richEntry = fullMeta || meta.flatEntry;
 
             const duration = Math.round(richEntry.duration || meta.flatEntry.duration || 0);
-            const genre    = await fetchGenre(title, artist, richEntry);
+            const genre = await fetchGenre(title, artist, richEntry);
 
-            const ts        = Date.now();
-            const uid       = Math.random().toString(36).slice(2, 6);
-            const songPath  = path.join(downloadDir, `tmp-${ts}-${uid}.mp3`);
+            const ts = Date.now();
+            const uid = Math.random().toString(36).slice(2, 6);
+            const songPath = path.join(downloadDir, `tmp-${ts}-${uid}.mp3`);
             const coverPath = path.join(downloadDir, `tmp-${ts}-${uid}-cover.jpg`);
             tempFiles.push(songPath, coverPath);
 
@@ -159,16 +159,16 @@ async function runDownload(url, safeQ, mode, res) {
                 send({
                     percent: ((completedCount / entries.length) * 100).toFixed(1),
                     current: completedCount,
-                    total:   entries.length,
+                    total: entries.length,
                     title,
-                    status:  'downloading',
+                    status: 'downloading',
                 });
                 return;
             }
 
             downloadResults[i] = {
                 i,
-                songPath:  fs.existsSync(songPath)  ? songPath  : null,
+                songPath: fs.existsSync(songPath) ? songPath : null,
                 coverPath: fs.existsSync(coverPath) ? coverPath : null,
                 hasCover,
                 mp3Name, coverName, index, title, artist, genre, duration,
@@ -178,15 +178,15 @@ async function runDownload(url, safeQ, mode, res) {
             send({
                 percent: ((completedCount / entries.length) * 100).toFixed(1),
                 current: completedCount,
-                total:   entries.length,
+                total: entries.length,
                 title,
-                status:  'downloading',
+                status: 'downloading',
             });
         };
 
         await runWorkerPool(entries, CONCURRENCY, res, processEntry);
 
-        const manifest       = [];
+        const manifest = [];
         const sessionEntries = [];
 
         for (const r of downloadResults) {
@@ -194,7 +194,7 @@ async function runDownload(url, safeQ, mode, res) {
 
             if (r.songPath) {
                 archive.file(r.songPath, {
-                    name:  mode === 'flat' ? r.mp3Name : `songs/${r.mp3Name}`,
+                    name: mode === 'flat' ? r.mp3Name : `songs/${r.mp3Name}`,
                     store: true,
                 });
             }
@@ -204,24 +204,25 @@ async function runDownload(url, safeQ, mode, res) {
             }
 
             manifest.push({
-                file:     mode === 'flat' ? r.mp3Name : `songs/${r.mp3Name}`,
-                cover:    `covers/${r.coverName}`,
-                title:    r.title,
-                artist:   r.artist,
-                genre:    r.genre,
+                file: mode === 'flat' ? r.mp3Name : `songs/${r.mp3Name}`,
+                cover: `covers/${r.coverName}`,
+                title: r.title,
+                artist: r.artist,
+                genre: r.genre,
                 duration: r.duration,
+                tags: entries[r.i]?.tags || [],
             });
 
             sessionEntries.push({
-                idx:         r.i,
-                trackNum:    r.index,
-                mp3Name:     r.mp3Name,
-                coverName:   r.coverName,
-                hasCover:    needsCover ? r.hasCover : false,
-                title:       r.title,
-                artist:      r.artist,
-                genre:       r.genre,
-                duration:    r.duration,
+                idx: r.i,
+                trackNum: r.index,
+                mp3Name: r.mp3Name,
+                coverName: r.coverName,
+                hasCover: needsCover ? r.hasCover : false,
+                title: r.title,
+                artist: r.artist,
+                genre: r.genre,
+                duration: r.duration,
                 durationFmt: fmtDuration(r.duration),
             });
         }
@@ -232,22 +233,22 @@ async function runDownload(url, safeQ, mode, res) {
 
         tempFiles.forEach(tryUnlink);
 
-        const existing    = sessions.get(sessionId) || { albumName, entries: sessionEntries, createdAt: Date.now() };
+        const existing = sessions.get(sessionId) || { albumName, entries: sessionEntries, createdAt: Date.now() };
         const sessionData = { ...existing, albumName, entries: sessionEntries, createdAt: Date.now() };
-        if (mode === 'structured') sessionData.zipFile         = path.basename(zipPath);
-        if (mode === 'flat')       sessionData.flatZipFile     = path.basename(zipPath);
-        if (mode === 'personal')   sessionData.personalZipFile = path.basename(zipPath);
+        if (mode === 'structured') sessionData.zipFile = path.basename(zipPath);
+        if (mode === 'flat') sessionData.flatZipFile = path.basename(zipPath);
+        if (mode === 'personal') sessionData.personalZipFile = path.basename(zipPath);
         sessions.set(sessionId, sessionData);
 
         send({
-            done:       true,
-            percent:    '100.0',
+            done: true,
+            percent: '100.0',
             sessionId,
             mode,
-            fileName:   path.basename(zipPath),
+            fileName: path.basename(zipPath),
             albumName,
             trackCount: sessionEntries.length,
-            tracks:     sessionEntries,
+            tracks: sessionEntries,
         });
 
         if (!res.writableEnded) res.end();
