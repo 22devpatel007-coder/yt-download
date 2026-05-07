@@ -10,6 +10,7 @@ const { fetchPlaylistCover } = require('../downloader/playlistCover');
 const { setupArchive } = require('../downloader/archiveBuilder');
 const { buildManifest } = require('../downloader/manifestBuilder');
 const { runWorkerPool } = require('../downloader/workerPool');
+const { lookupArtist } = require('../utils/musicbrainz');
 
 // ─── Clean YouTube title → extract real song title + artist ───────────────────
 function parseTitle(rawTitle, uploaderName) {
@@ -19,7 +20,7 @@ function parseTitle(rawTitle, uploaderName) {
         .trim();
 
     t = t
-        .replace(/\(?\s*(official\s*)?(lyrics?\s*)?(video|audio|music video|mv|hd|4k|visualizer|lyric video|audio video)\s*\)?/gi, '')
+        .replace(/\(?\s*(official\s*)?(lyrics?\s*)?(video|audio|music video|mv|hd|4k|visualizer|lyric video|audio video|lyrical)\s*\)?/gi, '')
         .replace(/\(?\s*lyrics?\s*\)?/gi, '')
         .replace(/\(?\s*ft\.?[^)]*\)?\s*$/gi, '')
         .replace(/\[\s*[^\]]*\]/gi, '')
@@ -42,11 +43,7 @@ function parseTitle(rawTitle, uploaderName) {
             if (leftLower.includes(uploaderLower) || uploaderLower.includes(leftLower)) {
                 return { title: right, artist: left };
             }
-            if (left.split(' ').length <= right.split(' ').length) {
-                return { title: right, artist: left };
-            } else {
-                return { title: left, artist: right };
-            }
+            return { title: right, artist: left };
         }
     }
 
@@ -126,16 +123,26 @@ async function runDownload(url, safeQ, mode, res) {
                 return;
             }
 
-            const { index, title, artist, mp3Name, coverName } = meta;
+            const { index } = meta;
 
             // ── Fetch full metadata for this track to get genre ────────────────
-            //    This is the key fix: flat entries have no tags/genre/categories.
-            //    We fetch the full video page for each track individually.
             const fullMeta = await fetchFullMeta(meta.entryUrl);
             const richEntry = fullMeta || meta.flatEntry;
+            const rawFullTitle = fullMeta?.title || meta.flatEntry.title || `Track ${index}`;
+            const rawUploader = fullMeta?.uploader || fullMeta?.channel || 'Unknown Artist';
+            const rawArtist = fullMeta?.artist || fullMeta?.creator || null;
+            const { title: parsedTitle, artist: parsedArtistFull } = parseTitle(rawFullTitle, rawUploader);
+            const rawTitle = fullMeta?.track || parsedTitle;
+            const title = safeName(rawTitle.replace(/full song|lyrical|official|lyrics/gi, '').replace(/\s*-\s*$/, '').trim());
+            const firstArtist = rawArtist ? rawArtist.split(',')[0].trim() : parsedArtistFull || null;
+            const artist = safeName(
+                (await lookupArtist(title)) || firstArtist || meta.artist
+            );
+            const mp3Name = `${title} - ${artist}.mp3`;
+            const coverName = `${index} - ${artist} - ${title}.jpg`;
 
             const duration = Math.round(richEntry.duration || meta.flatEntry.duration || 0);
-            const genre = await fetchGenre(title, artist, richEntry);
+            const genre = 'Unknown';
 
             const ts = Date.now();
             const uid = Math.random().toString(36).slice(2, 6);
