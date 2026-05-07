@@ -11,7 +11,7 @@ const { setupArchive } = require('../downloader/archiveBuilder');
 const { buildManifest } = require('../downloader/manifestBuilder');
 const { runWorkerPool } = require('../downloader/workerPool');
 const { lookupArtist } = require('../utils/musicbrainz');
-
+const { getPlaylistTracks } = require('../utils/spotify');
 // ─── Clean YouTube title → extract real song title + artist ───────────────────
 function parseTitle(rawTitle, uploaderName) {
     let t = rawTitle
@@ -127,22 +127,27 @@ async function runDownload(url, safeQ, mode, res) {
 
             // ── Fetch full metadata for this track to get genre ────────────────
             const fullMeta = await fetchFullMeta(meta.entryUrl);
-            const richEntry = fullMeta || meta.flatEntry;
             const rawFullTitle = fullMeta?.title || meta.flatEntry.title || `Track ${index}`;
             const rawUploader = fullMeta?.uploader || fullMeta?.channel || 'Unknown Artist';
             const rawArtist = fullMeta?.artist || fullMeta?.creator || null;
             const { title: parsedTitle, artist: parsedArtistFull } = parseTitle(rawFullTitle, rawUploader);
             const rawTitle = fullMeta?.track || parsedTitle;
             const title = safeName(rawTitle.replace(/full song|lyrical|official|lyrics/gi, '').replace(/\s*-\s*$/, '').trim());
-            const firstArtist = rawArtist ? rawArtist.split(',')[0].trim() : parsedArtistFull || null;
-            const artist = safeName(
-                (await lookupArtist(title)) || firstArtist || meta.artist
-            );
+            const firstArtist = rawArtist
+                ? rawArtist.split(',')[0].trim()
+                : parsedArtistFull && parsedArtistFull.toLowerCase() !== (fullMeta?.uploader || '').toLowerCase()
+                    ? parsedArtistFull
+                    : null;
+            const mbArtist = await Promise.race([
+                lookupArtist(title),
+                new Promise(r => setTimeout(() => r(null), 5000))
+            ]);
+            const artist = safeName(mbArtist || firstArtist || meta.artist);
             const mp3Name = `${title} - ${artist}.mp3`;
             const coverName = `${index} - ${artist} - ${title}.jpg`;
 
-            const duration = Math.round(richEntry.duration || meta.flatEntry.duration || 0);
-            const genre = 'Unknown';
+            const duration = Math.round(fullMeta?.duration || meta.flatEntry.duration || 0);
+            const genre = extractGenre(richEntry);
 
             const ts = Date.now();
             const uid = Math.random().toString(36).slice(2, 6);
