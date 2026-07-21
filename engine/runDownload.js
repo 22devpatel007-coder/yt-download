@@ -4,14 +4,13 @@ const fs = require('fs');
 
 const { CONCURRENCY, downloadDir } = require('../config');
 const sessions = require('../sessions/store');
-const { safeName, tryUnlink, getEntryUrl, fmtDuration, fetchGenre } = require('../utils/fileHelper');
+const { safeName, tryUnlink, getEntryUrl, fmtDuration, fetchGenre, extractGenre } = require('../utils/fileHelper');
 const { downloadTrack } = require('../downloader/trackDownloader');
 const { fetchPlaylistCover } = require('../downloader/playlistCover');
 const { setupArchive } = require('../downloader/archiveBuilder');
 const { buildManifest } = require('../downloader/manifestBuilder');
 const { runWorkerPool } = require('../downloader/workerPool');
 const { lookupArtist } = require('../utils/musicbrainz');
-const { getPlaylistTracks } = require('../utils/spotify');
 // ─── Clean YouTube title → extract real song title + artist ───────────────────
 function parseTitle(rawTitle, uploaderName) {
     let t = rawTitle
@@ -55,17 +54,37 @@ function parseTitle(rawTitle, uploaderName) {
 //  This fetches the real page metadata for one video URL.
 async function fetchFullMeta(entryUrl) {
     try {
-        return await ytDlp(entryUrl, {
-            dumpSingleJson: true,
-            noPlaylist: true,
-            socketTimeout: 30,
-        });
-    } catch {
+        const isSearch = entryUrl.startsWith('ytsearch');
+        const opts = { dumpSingleJson: true, socketTimeout: 30 };
+        if (!isSearch) opts.noPlaylist = true;
+        const result = await ytDlp(entryUrl, opts);
+       // console.log(`[fetchFullMeta] url=${entryUrl} duration=${result?.duration} entries0_dur=${result?.entries?.[0]?.duration}`);
+        // For search queries, yt-dlp returns a playlist wrapper with entries
+        // We need the actual video URL to get full metadata including duration
+        if (isSearch) {
+            const entry = result?.entries?.[0] || result;
+            if (entry?.webpage_url || entry?.url) {
+                const videoUrl = entry.webpage_url || entry.url;
+                const full = await ytDlp(videoUrl, {
+                    dumpSingleJson: true,
+                    noPlaylist: true,
+                    socketTimeout: 30,
+                });
+                const merged = full || entry;
+                if (!merged.duration && entry.duration) merged.duration = entry.duration;
+                return merged;
+            }
+            return entry;
+        }
+
+        return result;
+    } catch (e) {
+        // console.error('[fetchFullMeta ERROR]', e.message);
         return null;
     }
 }
 
-async function runDownload(url, safeQ, mode, res) {
+async function runDownload(url, safeQ, mode, res, spotifyToken = null) {
     const send = d => {
         try { if (!res.writableEnded) res.write(`data: ${JSON.stringify(d)}\n\n`); } catch { }
     };
@@ -76,9 +95,23 @@ async function runDownload(url, safeQ, mode, res) {
     try {
         send({ status: 'fetching', message: 'Fetching playlist info…' });
 
-        const info = await ytDlp(url, { dumpSingleJson: true, flatPlaylist: true, socketTimeout: 30 });
-        const entries = info.entries || [info];
-        const albumName = safeName(info.title || 'download');
+        let entries, albumName, info;
+
+        if (spotifyToken) {
+            const { spotifyTokenStore } = require('../routes/download');
+            const stored = spotifyTokenStore.get(spotifyToken);
+            if (!stored) throw new Error('Spotify session expired. Please try again.');
+            albumName = safeName(stored.playlistName || 'Spotify Playlist');
+            info = { description: '' };
+            entries = stored.tracks.map(t => ({
+                _spotifyTitle: t.title,
+                _spotifyArtist: t.artist,
+            }));
+        } else {
+            info = await ytDlp(url, { dumpSingleJson: true, flatPlaylist: true, socketTimeout: 30 });
+            entries = info.entries || [info];
+            albumName = safeName(info.title || 'download');
+        }
         const sessionId = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 
         const suffixMap = { flat: '-flat', personal: '-personal', structured: '' };
@@ -88,7 +121,7 @@ async function runDownload(url, safeQ, mode, res) {
 
         // ── Playlist-level cover (personal mode only) ──────────────────────────
         let playlistCoverPath = null;
-        if (mode === 'personal') {
+        if (mode === 'personal' && url) {
             playlistCoverPath = await fetchPlaylistCover(url, tempFiles);
         }
 
@@ -99,14 +132,20 @@ async function runDownload(url, safeQ, mode, res) {
         // ── Build basic track meta from flat entries ───────────────────────────
         const trackMeta = entries.map((v, i) => {
             const index = String(i + 1).padStart(2, '0');
-            const rawUploader = v.uploader || v.channel || 'Unknown Artist';
-            const { title: parsedTitle, artist: parsedArtist } = parseTitle(v.title || `Track ${index}`, rawUploader);
-            const title = safeName(v.track || parsedTitle);
-            const artist = safeName(v.artist || v.creator || parsedArtist);
+            let title, artist, entryUrl;
+            if (v._spotifyTitle) {
+                title = safeName(v._spotifyTitle);
+                artist = safeName(v._spotifyArtist);
+                entryUrl = `ytsearch1:${title} ${artist} official audio`;
+            } else {
+                const rawUploader = v.uploader || v.channel || 'Unknown Artist';
+                const { title: parsedTitle, artist: parsedArtist } = parseTitle(v.title || `Track ${index}`, rawUploader);
+                title = safeName(v.track || parsedTitle);
+                artist = safeName(v.artist || v.creator || parsedArtist);
+                entryUrl = v.webpage_url || v.url || (v.id ? `https://www.youtube.com/watch?v=${v.id}` : null);
+            }
             const mp3Name = `${title} - ${artist}.mp3`;
-            const stem = `${index} - ${title}`;
-            const coverName = `${stem}.jpg`;
-            const entryUrl = getEntryUrl(v, url);
+            const coverName = `${index} - ${title}.jpg`;
             return { i, index, title, artist, mp3Name, coverName, entryUrl, flatEntry: v };
         });
 
@@ -127,27 +166,47 @@ async function runDownload(url, safeQ, mode, res) {
 
             // ── Fetch full metadata for this track to get genre ────────────────
             const fullMeta = await fetchFullMeta(meta.entryUrl);
-            const rawFullTitle = fullMeta?.title || meta.flatEntry.title || `Track ${index}`;
-            const rawUploader = fullMeta?.uploader || fullMeta?.channel || 'Unknown Artist';
-            const rawArtist = fullMeta?.artist || fullMeta?.creator || null;
-            const { title: parsedTitle, artist: parsedArtistFull } = parseTitle(rawFullTitle, rawUploader);
-            const rawTitle = fullMeta?.track || parsedTitle;
-            const title = safeName(rawTitle.replace(/full song|lyrical|official|lyrics/gi, '').replace(/\s*-\s*$/, '').trim());
-            const firstArtist = rawArtist
-                ? rawArtist.split(',')[0].trim()
-                : parsedArtistFull && parsedArtistFull.toLowerCase() !== (fullMeta?.uploader || '').toLowerCase()
-                    ? parsedArtistFull
-                    : null;
-            const mbArtist = await Promise.race([
-                lookupArtist(title),
-                new Promise(r => setTimeout(() => r(null), 5000))
-            ]);
-            const artist = safeName(mbArtist || firstArtist || meta.artist);
+
+            // For ytsearch entries, yt-dlp returns a playlist wrapper — duration is inside entries[0]
+            // console.log(`[DURATION DEBUG] entry ${i + 1}`, {
+            //     fullMeta_duration: fullMeta?.duration,
+            //     entries0_duration: fullMeta?.entries?.[0]?.duration,
+            //     flatEntry_duration: meta.flatEntry?.duration,
+            // });
+            const duration = Math.round(
+                fullMeta?.duration ||
+                fullMeta?.entries?.[0]?.duration ||
+                meta.flatEntry?.duration ||
+                0
+            );
+            const genre = extractGenre(fullMeta || {});
+
+            // ── If Spotify gave us title+artist, trust it completely ───────────
+            let title, artist;
+            if (meta.flatEntry?._spotifyTitle) {
+                title = meta.title;
+                artist = meta.artist;
+            } else {
+                const rawFullTitle = fullMeta?.title || meta.flatEntry.title || `Track ${index}`;
+                const rawUploader = fullMeta?.uploader || fullMeta?.channel || 'Unknown Artist';
+                const rawArtist = fullMeta?.artist || fullMeta?.creator || null;
+                const { title: parsedTitle, artist: parsedArtistFull } = parseTitle(rawFullTitle, rawUploader);
+                const rawTitle = fullMeta?.track || parsedTitle;
+                title = safeName(rawTitle.replace(/full song|lyrical|official|lyrics/gi, '').replace(/\s*-\s*$/, '').trim());
+                const firstArtist = rawArtist
+                    ? rawArtist.split(',')[0].trim()
+                    : parsedArtistFull && parsedArtistFull.toLowerCase() !== (fullMeta?.uploader || '').toLowerCase()
+                        ? parsedArtistFull
+                        : null;
+                const mbArtist = await Promise.race([
+                    lookupArtist(title),
+                    new Promise(r => setTimeout(() => r(null), 5000))
+                ]);
+                artist = safeName(mbArtist || firstArtist || meta.artist);
+            }
+
             const mp3Name = `${title} - ${artist}.mp3`;
             const coverName = `${index} - ${artist} - ${title}.jpg`;
-
-            const duration = Math.round(fullMeta?.duration || meta.flatEntry.duration || 0);
-            const genre = extractGenre(richEntry);
 
             const ts = Date.now();
             const uid = Math.random().toString(36).slice(2, 6);
@@ -157,10 +216,11 @@ async function runDownload(url, safeQ, mode, res) {
 
             console.log(`⬇️  [${i + 1}/${entries.length}] ${title} — ${artist} [${genre}] (${mode})`);
 
+            const downloadUrl = fullMeta?.webpage_url || fullMeta?.url || meta.entryUrl;
             let hasCover = false;
             try {
                 const result = await downloadTrack(
-                    meta.entryUrl, songPath, coverPath, safeQ, needsCover,
+                    downloadUrl, songPath, coverPath, safeQ, needsCover,
                     title, artist, genre
                 );
                 hasCover = result.hasCover;
@@ -266,7 +326,7 @@ async function runDownload(url, safeQ, mode, res) {
         setTimeout(() => tryUnlink(zipPath), 30 * 60_000);
 
     } catch (err) {
-        console.error('[DOWNLOAD]', err.message);
+        console.error('[DOWNLOAD]', JSON.stringify(err));
         tempFiles.forEach(tryUnlink);
         if (zipPath) tryUnlink(zipPath);
         send({ error: true, message: 'Download failed. Please try again.' });

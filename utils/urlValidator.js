@@ -6,5 +6,13 @@ function isValidYouTubeUrl(url) {
             .includes(p.hostname);
     } catch { return false; }
 }
+function isValidSpotifyUrl(url) {
+    if (!url || typeof url !== 'string') return false;
+    try {
+        const p = new URL(url);
+        return p.hostname === 'open.spotify.com' && p.pathname.includes('/playlist/');
+    } catch { return false; }
+}
 
-module.exports = { isValidYouTubeUrl };
+module.exports = { isValidYouTubeUrl, isValidSpotifyUrl };
+
