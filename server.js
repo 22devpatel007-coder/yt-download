@@ -5,7 +5,7 @@ const corsMiddleware = require('./middleware/cors');
 
 const previewRouter = require('./routes/preview');
 const formatsRouter = require('./routes/formats');
-const downloadRouter = require('./routes/download');
+const { router: downloadRouter } = require('./routes/download');
 const serveRouter = require('./routes/serve');
 
 const app  = express();
